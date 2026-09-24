@@ -1,0 +1,18 @@
+[package]
+name = "greptimedb-ingester-python"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Python bindings for greptimedb-ingester"
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+greptimedb-ingester = { version = "0.19.0", features = ["tls-ring"] }
+pyo3 = { version = "0.25", features = ["abi3-py310", "extension-module"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["rt-multi-thread", "sync", "time", "macros"] }

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "greptimedb-ingester"
+version = "0.1.0"
+description = "Python bindings for the GreptimeDB Rust ingester"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+keywords = ["greptimedb", "database", "ingest", "grpc"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Rust",
+]
+
+[project.urls]
+Repository = "https://github.com/GreptimeTeam/greptimedb-ingester-rust"
+
+[dependency-groups]
+dev = [
+    "maturin>=1.8,<2.0",
+    "pytest>=8.0",
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "greptimedb_ingester._native"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }, { file = "src/**/*.rs" }]
