@@ -15,8 +15,12 @@ with client.bulk_writer(
     options=WriteOptions(compression="zstd", parallelism=8, timeout_secs=60),
 ) as writer:
     rows = writer.alloc_rows(10_000)
-    rows.add_row([1_234_567_890_000, "device_001", 23.5])
-    rows.add_row({"ts": 1_234_567_890_001, "device_id": "device_002", "temperature": 24.0})
+    rows.add_rows(
+        [
+            [1_234_567_890_000, "device_001", 23.5],
+            {"ts": 1_234_567_890_001, "device_id": "device_002", "temperature": 24.0},
+        ]
+    )
     request_ids = writer.write_async(rows)
     responses = writer.wait_all()
 

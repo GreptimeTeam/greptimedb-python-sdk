@@ -24,8 +24,7 @@ def make_batch(count, ts0):
 
 
 def fill(buffer, batch, ts0):
-    for i in range(batch):
-        buffer.add_row((f"d{i % 128}", ts0 + i, 20.0 + (i % 50)))
+    buffer.add_rows((f"d{i % 128}", ts0 + i, 20.0 + (i % 50)) for i in range(batch))
 
 
 def ensure_table(client, table, ts0):

@@ -55,6 +55,19 @@ impl Rows {
         Ok(())
     }
 
+    /// Convert a batch of rows in one call. The GIL stays held while the
+    /// iterable is consumed, so this avoids one Python-to-Rust crossing per row.
+    fn add_rows(&mut self, rows: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let mut parsed = Vec::new();
+        for row in rows.try_iter()? {
+            let input = parse_row(&row?)?;
+            parsed.push(align(&self.columns, &input)?);
+        }
+        let added = parsed.len();
+        self.rows.append(&mut parsed);
+        Ok(added)
+    }
+
     fn __len__(&self) -> usize {
         self.rows.len()
     }
