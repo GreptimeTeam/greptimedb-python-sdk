@@ -154,14 +154,13 @@ impl Client {
         })
     }
 
-    #[pyo3(signature = (table, columns, options = None, auto_create_table = false))]
+    #[pyo3(signature = (table, columns, options = None))]
     fn bulk_writer(
         &self,
         py: Python<'_>,
         table: String,
         columns: Vec<Column>,
         options: Option<WriteOptions>,
-        auto_create_table: bool,
     ) -> PyResult<BulkWriter> {
         if table.is_empty() {
             return Err(raise("table name must not be empty", false));
@@ -178,7 +177,6 @@ impl Client {
             table,
             columns,
             options.unwrap_or_default(),
-            auto_create_table,
         )
     }
 

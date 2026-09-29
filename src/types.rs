@@ -58,8 +58,6 @@ pub enum ColumnDataType {
     String = 12,
     #[pyo3(name = "DATE")]
     Date = 13,
-    #[pyo3(name = "DATETIME")]
-    Datetime = 14,
     #[pyo3(name = "TIMESTAMP_SECOND")]
     TimestampSecond = 15,
     #[pyo3(name = "TIMESTAMP_MILLISECOND")]
@@ -76,19 +74,10 @@ pub enum ColumnDataType {
     TimeMicrosecond = 21,
     #[pyo3(name = "TIME_NANOSECOND")]
     TimeNanosecond = 22,
-    #[pyo3(name = "INTERVAL_YEAR_MONTH")]
-    IntervalYearMonth = 23,
-    #[pyo3(name = "INTERVAL_DAY_TIME")]
-    IntervalDayTime = 24,
-    #[pyo3(name = "INTERVAL_MONTH_DAY_NANO")]
-    IntervalMonthDayNano = 25,
     #[pyo3(name = "DECIMAL128")]
     Decimal128 = 30,
     #[pyo3(name = "JSON")]
     Json = 31,
-    /// Row-insert JSON2 column. Rejected by the bulk writer.
-    #[pyo3(name = "JSON2")]
-    Json2 = 100,
 }
 
 #[pymethods]
@@ -109,7 +98,6 @@ impl ColumnDataType {
             Self::Binary => "BINARY",
             Self::String => "STRING",
             Self::Date => "DATE",
-            Self::Datetime => "DATETIME",
             Self::TimestampSecond => "TIMESTAMP_SECOND",
             Self::TimestampMillisecond => "TIMESTAMP_MILLISECOND",
             Self::TimestampMicrosecond => "TIMESTAMP_MICROSECOND",
@@ -118,12 +106,8 @@ impl ColumnDataType {
             Self::TimeMillisecond => "TIME_MILLISECOND",
             Self::TimeMicrosecond => "TIME_MICROSECOND",
             Self::TimeNanosecond => "TIME_NANOSECOND",
-            Self::IntervalYearMonth => "INTERVAL_YEAR_MONTH",
-            Self::IntervalDayTime => "INTERVAL_DAY_TIME",
-            Self::IntervalMonthDayNano => "INTERVAL_MONTH_DAY_NANO",
             Self::Decimal128 => "DECIMAL128",
             Self::Json => "JSON",
-            Self::Json2 => "JSON2",
         };
         format!("ColumnDataType.{name}")
     }
@@ -146,7 +130,6 @@ impl ColumnDataType {
             Self::Binary => ProtoType::Binary,
             Self::String => ProtoType::String,
             Self::Date => ProtoType::Date,
-            Self::Datetime => ProtoType::Datetime,
             Self::TimestampSecond => ProtoType::TimestampSecond,
             Self::TimestampMillisecond => ProtoType::TimestampMillisecond,
             Self::TimestampMicrosecond => ProtoType::TimestampMicrosecond,
@@ -155,22 +138,9 @@ impl ColumnDataType {
             Self::TimeMillisecond => ProtoType::TimeMillisecond,
             Self::TimeMicrosecond => ProtoType::TimeMicrosecond,
             Self::TimeNanosecond => ProtoType::TimeNanosecond,
-            Self::IntervalYearMonth => ProtoType::IntervalYearMonth,
-            Self::IntervalDayTime => ProtoType::IntervalDayTime,
-            Self::IntervalMonthDayNano => ProtoType::IntervalMonthDayNano,
             Self::Decimal128 => ProtoType::Decimal128,
-            Self::Json | Self::Json2 => ProtoType::Json,
+            Self::Json => ProtoType::Json,
         }
-    }
-
-    pub fn bulk_supported(self) -> bool {
-        !matches!(
-            self,
-            Self::IntervalYearMonth
-                | Self::IntervalDayTime
-                | Self::IntervalMonthDayNano
-                | Self::Json2
-        )
     }
 
     pub fn is_timestamp(self) -> bool {
@@ -180,7 +150,6 @@ impl ColumnDataType {
                 | Self::TimestampMillisecond
                 | Self::TimestampMicrosecond
                 | Self::TimestampNanosecond
-                | Self::Datetime
         )
     }
 
@@ -200,7 +169,6 @@ impl ColumnDataType {
             Self::Binary => "binary",
             Self::String => "string",
             Self::Date => "date",
-            Self::Datetime => "datetime",
             Self::TimestampSecond => "timestamp_second",
             Self::TimestampMillisecond => "timestamp_millisecond",
             Self::TimestampMicrosecond => "timestamp_microsecond",
@@ -209,12 +177,8 @@ impl ColumnDataType {
             Self::TimeMillisecond => "time_millisecond",
             Self::TimeMicrosecond => "time_microsecond",
             Self::TimeNanosecond => "time_nanosecond",
-            Self::IntervalYearMonth => "interval_year_month",
-            Self::IntervalDayTime => "interval_day_time",
-            Self::IntervalMonthDayNano => "interval_month_day_nano",
             Self::Decimal128 => "decimal128",
             Self::Json => "json",
-            Self::Json2 => "json2",
         }
     }
 }
@@ -242,9 +206,6 @@ impl Column {
     ) -> PyResult<Self> {
         if name.is_empty() {
             return Err(raise("column name must not be empty", false));
-        }
-        if data_type == ColumnDataType::Json2 && semantic_type != SemanticType::Field {
-            return Err(raise("JSON2 columns must use SemanticType.FIELD", false));
         }
         match (data_type, precision, scale) {
             (ColumnDataType::Decimal128, Some(precision), Some(scale)) => {

@@ -9,11 +9,10 @@ use greptimedb_ingester::api::v1::{
     ColumnSchema, DecimalTypeExtension, DeleteRequest, DeleteRequests, RowInsertRequest,
     RowInsertRequests, Rows as ProtoRows,
 };
-use greptimedb_ingester::helpers::schema::{field, json2_field, tag, timestamp};
+use greptimedb_ingester::helpers::schema::{field, tag, timestamp};
 use greptimedb_ingester::helpers::values::{
-    binary_value, bool_value, date_value, datetime_value, decimal128_value, f32_value, f64_value,
-    i16_value, i32_value, i64_value, i8_value, interval_day_time_value,
-    interval_month_day_nano_value, interval_year_month_value, json2_value, none_value,
+    binary_value, bool_value, date_value, decimal128_value, f32_value, f64_value, i16_value,
+    i32_value, i64_value, i8_value, none_value,
     string_value, time_microsecond_value, time_millisecond_value, time_nanosecond_value,
     time_second_value, timestamp_microsecond_value, timestamp_millisecond_value,
     timestamp_nanosecond_value, timestamp_second_value, u16_value, u32_value, u64_value, u8_value,
@@ -103,9 +102,6 @@ pub fn column_schema(column: &Column) -> Result<ColumnSchema, RemoteError> {
     let mut schema = match column.semantic_type {
         SemanticType::Tag => tag(&column.name, dtype),
         SemanticType::Timestamp => timestamp(&column.name, dtype),
-        SemanticType::Field if column.data_type == ColumnDataType::Json2 => {
-            json2_field(&column.name)
-        }
         SemanticType::Field => field(&column.name, dtype),
     };
     if column.data_type == ColumnDataType::Decimal128 {
@@ -159,15 +155,6 @@ pub fn build_delete(
 ) -> Result<DeleteRequests, RemoteError> {
     if rows.is_empty() {
         return Err(RemoteError::new("cannot delete an empty row batch", false));
-    }
-    if columns
-        .iter()
-        .any(|column| column.data_type == ColumnDataType::Json2)
-    {
-        return Err(RemoteError::new(
-            "JSON2 columns cannot be used with delete(); pass the key columns instead",
-            false,
-        ));
     }
     let row_count = u32::try_from(rows.len())
         .map_err(|_| RemoteError::new("too many rows to delete in one request", false))?;
@@ -233,7 +220,6 @@ fn push_column_value(
         ValueData::BinaryValue(v) => values.binary_values.push(v),
         ValueData::StringValue(v) => values.string_values.push(v),
         ValueData::DateValue(v) => values.date_values.push(v),
-        ValueData::DatetimeValue(v) => values.datetime_values.push(v),
         ValueData::TimestampSecondValue(v) => values.timestamp_second_values.push(v),
         ValueData::TimestampMillisecondValue(v) => values.timestamp_millisecond_values.push(v),
         ValueData::TimestampMicrosecondValue(v) => values.timestamp_microsecond_values.push(v),
@@ -242,11 +228,14 @@ fn push_column_value(
         ValueData::TimeMillisecondValue(v) => values.time_millisecond_values.push(v),
         ValueData::TimeMicrosecondValue(v) => values.time_microsecond_values.push(v),
         ValueData::TimeNanosecondValue(v) => values.time_nanosecond_values.push(v),
-        ValueData::IntervalYearMonthValue(v) => values.interval_year_month_values.push(v),
-        ValueData::IntervalDayTimeValue(v) => values.interval_day_time_values.push(v),
-        ValueData::IntervalMonthDayNanoValue(v) => values.interval_month_day_nano_values.push(v),
         ValueData::Decimal128Value(v) => values.decimal128_values.push(v),
-        ValueData::JsonValue(_) | ValueData::ListValue(_) | ValueData::StructValue(_) => {
+        ValueData::DatetimeValue(_)
+        | ValueData::IntervalYearMonthValue(_)
+        | ValueData::IntervalDayTimeValue(_)
+        | ValueData::IntervalMonthDayNanoValue(_)
+        | ValueData::JsonValue(_)
+        | ValueData::ListValue(_)
+        | ValueData::StructValue(_) => {
             return Err(RemoteError::new(
                 "this value cannot be encoded in a delete request",
                 false,
@@ -284,7 +273,6 @@ pub fn to_proto(
         ColumnDataType::Binary => binary_value(expect_bytes(cell)?),
         ColumnDataType::String => string_value(expect_str(cell)?.to_owned()),
         ColumnDataType::Date => date_value(expect_date(cell)?),
-        ColumnDataType::Datetime => datetime_value(expect_timestamp(cell, 1_000_000)?),
         ColumnDataType::TimestampSecond => {
             timestamp_second_value(expect_epoch(cell, 1_000_000_000)?)
         }
@@ -305,20 +293,6 @@ pub fn to_proto(
         ColumnDataType::TimeNanosecond => {
             time_nanosecond_value(expect_int(cell, "time_nanosecond")?)
         }
-        ColumnDataType::IntervalYearMonth => {
-            interval_year_month_value(expect_int(cell, "interval_year_month")?)
-        }
-        ColumnDataType::IntervalDayTime => {
-            interval_day_time_value(expect_int(cell, "interval_day_time")?)
-        }
-        ColumnDataType::IntervalMonthDayNano => {
-            let (months, days, nanos) = expect_int3(cell)?;
-            interval_month_day_nano_value(
-                fit_int(months, "interval months")?,
-                fit_int(days, "interval days")?,
-                fit_int(nanos, "interval nanoseconds")?,
-            )
-        }
         ColumnDataType::Decimal128 => {
             decimal128_value(expect_decimal(cell, column.scale.expect("scale"))?)
         }
@@ -328,24 +302,11 @@ pub fn to_proto(
                 .map_err(|err| RemoteError::new(format!("invalid JSON: {err}"), false))?;
             string_value(text)
         }
-        ColumnDataType::Json2 => {
-            let text = expect_json_text(cell)?;
-            return json2_value(&text).map_err(RemoteError::from);
-        }
     };
     Ok(value)
 }
 
 pub fn to_bulk(column: &Column, cell: &Cell) -> Result<Value, RemoteError> {
-    if !column.data_type.bulk_supported() {
-        return Err(RemoteError::new(
-            format!(
-                "{} is only supported by insert(), not the bulk writer",
-                column.data_type.name()
-            ),
-            false,
-        ));
-    }
     if matches!(cell, Cell::Null) {
         if column.semantic_type == SemanticType::Timestamp || column.data_type.is_timestamp() {
             return Err(RemoteError::new(
@@ -370,7 +331,6 @@ pub fn to_bulk(column: &Column, cell: &Cell) -> Result<Value, RemoteError> {
         ColumnDataType::Binary => Value::Binary(expect_bytes(cell)?),
         ColumnDataType::String => Value::String(expect_str(cell)?.to_owned()),
         ColumnDataType::Date => Value::Date(expect_date(cell)?),
-        ColumnDataType::Datetime => Value::Datetime(expect_timestamp(cell, 1_000_000)?),
         ColumnDataType::TimestampSecond => {
             Value::TimestampSecond(expect_epoch(cell, 1_000_000_000)?)
         }
@@ -400,10 +360,6 @@ pub fn to_bulk(column: &Column, cell: &Cell) -> Result<Value, RemoteError> {
                 .map_err(|err| RemoteError::new(format!("invalid JSON: {err}"), false))?;
             Value::Json(text)
         }
-        ColumnDataType::IntervalYearMonth
-        | ColumnDataType::IntervalDayTime
-        | ColumnDataType::IntervalMonthDayNano
-        | ColumnDataType::Json2 => unreachable!("rejected by bulk_supported"),
     };
     Ok(value)
 }
@@ -425,7 +381,6 @@ pub fn format_proto(value: &greptimedb_ingester::api::v1::Value) -> String {
         Some(ValueData::BinaryValue(v)) => format!("binary:{}", hex(v)),
         Some(ValueData::StringValue(v)) => format!("string:{v}"),
         Some(ValueData::DateValue(v)) => format!("date:{v}"),
-        Some(ValueData::DatetimeValue(v)) => format!("datetime:{v}"),
         Some(ValueData::TimestampSecondValue(v)) => format!("timestamp_second:{v}"),
         Some(ValueData::TimestampMillisecondValue(v)) => format!("timestamp_millisecond:{v}"),
         Some(ValueData::TimestampMicrosecondValue(v)) => format!("timestamp_microsecond:{v}"),
@@ -434,19 +389,11 @@ pub fn format_proto(value: &greptimedb_ingester::api::v1::Value) -> String {
         Some(ValueData::TimeMillisecondValue(v)) => format!("time_millisecond:{v}"),
         Some(ValueData::TimeMicrosecondValue(v)) => format!("time_microsecond:{v}"),
         Some(ValueData::TimeNanosecondValue(v)) => format!("time_nanosecond:{v}"),
-        Some(ValueData::IntervalYearMonthValue(v)) => format!("interval_year_month:{v}"),
-        Some(ValueData::IntervalDayTimeValue(v)) => format!("interval_day_time:{v}"),
-        Some(ValueData::IntervalMonthDayNanoValue(v)) => {
-            format!(
-                "interval_month_day_nano:{},{},{}",
-                v.months, v.days, v.nanoseconds
-            )
-        }
         Some(ValueData::Decimal128Value(v)) => {
             let coefficient = ((v.hi as i128) << 64) | (v.lo as u64 as i128);
             format!("decimal128:{coefficient}")
         }
-        Some(ValueData::JsonValue(_)) => "json2".to_owned(),
+        Some(ValueData::JsonValue(_)) => "json_value".to_owned(),
         Some(other) => format!("unsupported:{other:?}"),
     }
 }
@@ -569,30 +516,12 @@ fn expect_date(cell: &Cell) -> Result<i32, RemoteError> {
     }
 }
 
-fn expect_int3(cell: &Cell) -> Result<(i128, i128, i128), RemoteError> {
-    match cell {
-        Cell::Int3(months, days, nanos) => Ok((*months, *days, *nanos)),
-        other => Err(type_mismatch(
-            "interval_month_day_nano tuple (months, days, nanoseconds)",
-            other,
-        )),
-    }
-}
-
 /// Integer cells are already in the column unit. Datetime cells are absolute instants.
 fn expect_epoch(cell: &Cell, unit_nanos: i64) -> Result<i64, RemoteError> {
     match cell {
         Cell::Int(value) => fit_int(*value, "timestamp"),
         Cell::Timestamp { secs, subsec_nanos } => scale_timestamp(*secs, *subsec_nanos, unit_nanos),
         other => Err(type_mismatch("timestamp", other)),
-    }
-}
-
-fn expect_timestamp(cell: &Cell, unit_nanos: i64) -> Result<i64, RemoteError> {
-    match cell {
-        Cell::Int(value) => fit_int(*value, "datetime"),
-        Cell::Timestamp { secs, subsec_nanos } => scale_timestamp(*secs, *subsec_nanos, unit_nanos),
-        other => Err(type_mismatch("datetime", other)),
     }
 }
 

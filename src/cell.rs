@@ -30,8 +30,6 @@ pub enum Cell {
     },
     /// JSON text produced from a Python object, or supplied directly for JSON columns.
     Json(String),
-    /// Three integers, used by `INTERVAL_MONTH_DAY_NANO`.
-    Int3(i128, i128, i128),
 }
 
 impl Cell {
@@ -47,7 +45,6 @@ impl Cell {
             Self::DateDays(_) => "date",
             Self::Timestamp { .. } => "datetime",
             Self::Json(_) => "json",
-            Self::Int3(_, _, _) => "tuple",
         }
     }
 }
@@ -99,28 +96,6 @@ pub fn cell_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Cell> {
         let ordinal: i32 = obj.call_method0("toordinal")?.extract()?;
         // `date(1970, 1, 1).toordinal()`
         return Ok(Cell::DateDays(ordinal - 719_163));
-    }
-
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
-        if tuple.len() == 3
-            && tuple
-                .iter()
-                .all(|item| item.is_instance_of::<PyInt>() && !item.is_instance_of::<PyBool>())
-        {
-            let a = tuple
-                .get_item(0)?
-                .extract::<i128>()
-                .map_err(|_| raise("integer does not fit in i128", false))?;
-            let b = tuple
-                .get_item(1)?
-                .extract::<i128>()
-                .map_err(|_| raise("integer does not fit in i128", false))?;
-            let c = tuple
-                .get_item(2)?
-                .extract::<i128>()
-                .map_err(|_| raise("integer does not fit in i128", false))?;
-            return Ok(Cell::Int3(a, b, c));
-        }
     }
 
     if obj.is_instance_of::<PyDict>()

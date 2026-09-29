@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from decimal import Decimal
 
 import pytest
@@ -12,6 +12,7 @@ from greptimedb_ingester import (
     WriteOptions,
 )
 from greptimedb_ingester._native import describe_row
+from type_samples import ALL_COLUMNS, ALL_ROW, BULK_COLUMNS, BULK_ROW
 
 
 def col(name, data_type, semantic=SemanticType.FIELD, precision=None, scale=None):
@@ -36,14 +37,84 @@ def test_integer_widths_and_ranges():
     assert exc.value.retriable is False
 
 
-def test_timestamps_keep_the_column_unit():
-    columns = [
-        col("ts", ColumnDataType.TIMESTAMP_MILLISECOND, SemanticType.TIMESTAMP),
+def test_timestamps_accept_integers_and_datetimes():
+    # 2009-02-13 23:31:30.123456 UTC
+    aware = datetime(2009, 2, 13, 23, 31, 30, 123456, tzinfo=timezone.utc)
+    naive = datetime(2009, 2, 13, 23, 31, 30, 123456)
+    cases = [
+        (ColumnDataType.TIMESTAMP_SECOND, "timestamp_second:1234567890"),
+        (ColumnDataType.TIMESTAMP_MILLISECOND, "timestamp_millisecond:1234567890123"),
+        (ColumnDataType.TIMESTAMP_MICROSECOND, "timestamp_microsecond:1234567890123456"),
+        (ColumnDataType.TIMESTAMP_NANOSECOND, "timestamp_nanosecond:1234567890123456000"),
     ]
-    assert describe_row(columns, [1_234_567_890_000]) == ["timestamp_millisecond:1234567890000"]
-    aware = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    described = describe_row(columns, [aware])[0]
-    assert described == f"timestamp_millisecond:{int(aware.timestamp() * 1000)}"
+    for data_type, expected in cases:
+        columns = [col("ts", data_type, SemanticType.TIMESTAMP)]
+        assert describe_row(columns, [aware]) == [expected]
+        assert describe_row(columns, [naive]) == [expected]
+        assert describe_row(columns, [aware], bulk=True) == [expected]
+
+    columns = [col("ts", ColumnDataType.TIMESTAMP_MILLISECOND, SemanticType.TIMESTAMP)]
+    assert describe_row(columns, [1_234_567_890_123]) == ["timestamp_millisecond:1234567890123"]
+
+
+def test_time_is_an_integer_offset_from_midnight():
+    column = col("clock", ColumnDataType.TIME_MILLISECOND)
+    assert describe_row([column], [3_661_000]) == ["time_millisecond:3661000"]
+    with pytest.raises(GreptimeError, match="expected time_millisecond, got datetime"):
+        describe_row([column], [datetime(2009, 2, 13, 23, 31, 30, tzinfo=timezone.utc)])
+    with pytest.raises(GreptimeError, match="unsupported Python value time"):
+        describe_row([column], [time(1, 1, 1)])
+
+
+INSERT_ENCODED = {
+    "ok": "bool:true",
+    "i8": "i8:-8",
+    "i16": "i16:-16",
+    "i32": "i32:-32",
+    "i64": "i64:-64",
+    "u8": "u8:8",
+    "u16": "u16:16",
+    "u32": "u32:32",
+    "u64": "u64:64",
+    "f32": "f32:1.5",
+    "f64": "f64:23.5",
+    "payload": "binary:dead",
+    "host": "string:edge",
+    "day": "date:14288",
+    "ts_s": "timestamp_second:1234567890",
+    "ts_ms": "timestamp_millisecond:1234567890000",
+    "ts_us": "timestamp_microsecond:1234567890000000",
+    "ts_ns": "timestamp_nanosecond:1234567890000000000",
+    "clock_s": "time_second:3661",
+    "clock_ms": "time_millisecond:3661000",
+    "clock_us": "time_microsecond:3661000000",
+    "clock_ns": "time_nanosecond:3661000000000",
+    "price": "decimal128:1234",
+    "attrs": 'string:{"a": 1}',
+}
+
+
+def test_every_column_type_encodes():
+    covered = {str(column.data_type) for column in ALL_COLUMNS}
+    declared = {
+        str(getattr(ColumnDataType, name))
+        for name in dir(ColumnDataType)
+        if name.isupper()
+    }
+    assert covered == declared
+    assert [column.semantic_type for column in ALL_COLUMNS].count(SemanticType.TIMESTAMP) == 1
+    assert describe_row(ALL_COLUMNS, ALL_ROW) == [
+        INSERT_ENCODED[column.name] for column in ALL_COLUMNS
+    ]
+
+
+def test_bulk_sample_covers_every_type():
+    assert [column.name for column in BULK_COLUMNS] == [column.name for column in ALL_COLUMNS]
+    encoded = dict(INSERT_ENCODED)
+    encoded["attrs"] = 'json:{"a": 1}'
+    assert describe_row(BULK_COLUMNS, BULK_ROW, bulk=True) == [
+        encoded[column.name] for column in BULK_COLUMNS
+    ]
 
 
 def test_null_timestamp_is_rejected():
@@ -81,21 +152,19 @@ def test_binary_null_and_string():
     assert describe_row(columns, [None, None, None]) == ["null", "null", "null"]
 
 
-def test_json2_accepts_objects_and_rejects_arrays():
-    column = col("attrs", ColumnDataType.JSON2)
-    assert describe_row([column], ['{"a":1}']) == ["json2"]
-    assert describe_row([column], [{"a": 1}]) == ["json2"]
+def test_json_accepts_objects_and_rejects_invalid_text():
+    column = col("attrs", ColumnDataType.JSON)
+    assert describe_row([column], ['{"a":1}']) == ['string:{"a":1}']
+    assert describe_row([column], [{"a": 1}]) == ['string:{"a": 1}']
     assert describe_row([column], [None]) == ["null"]
     with pytest.raises(GreptimeError, match="JSON") as exc:
-        describe_row([column], ["[]"])
+        describe_row([column], ["["])
     assert exc.value.retriable is False
 
 
-def test_bulk_json_and_rejects_json2():
-    json_column = col("attrs", ColumnDataType.JSON)
-    assert describe_row([json_column], ['{"a":1}'], bulk=True) == ['json:{"a":1}']
-    with pytest.raises(GreptimeError, match="bulk writer"):
-        describe_row([col("attrs", ColumnDataType.JSON2)], [None], bulk=True)
+def test_bulk_json():
+    column = col("attrs", ColumnDataType.JSON)
+    assert describe_row([column], ['{"a":1}'], bulk=True) == ['json:{"a":1}']
 
 
 def test_named_rows_follow_column_order():
@@ -111,11 +180,6 @@ def test_named_rows_follow_column_order():
     assert described == ["string:device_001", "timestamp_millisecond:10", "f64:23.5"]
     with pytest.raises(GreptimeError, match="missing column"):
         describe_row(columns, {"device": "device_001"})
-
-
-def test_interval_month_day_nano():
-    column = col("span", ColumnDataType.INTERVAL_MONTH_DAY_NANO)
-    assert describe_row([column], [(1, 2, 3)]) == ["interval_month_day_nano:1,2,3"]
 
 
 def test_client_rejects_incomplete_options():

@@ -1,29 +1,45 @@
-"""Bulk stream write. The table must already exist unless auto_create_table is enabled."""
+"""Bulk-write one row into a table that already exists.
 
-from greptimedb_ingester import Client, Column, ColumnDataType, SemanticType, WriteOptions
+Requires GreptimeDB listening on 127.0.0.1:4001, HTTP SQL on 127.0.0.1:4000.
+bulk does not create tables. This example inserts one row first, then bulk-writes
+another row into py_ingester_bulk_existing.
+"""
 
-client = Client(["127.0.0.1:4001"], database="public")
-columns = [
-    Column("ts", ColumnDataType.TIMESTAMP_MILLISECOND, SemanticType.TIMESTAMP),
-    Column("device_id", ColumnDataType.STRING, SemanticType.FIELD),
-    Column("temperature", ColumnDataType.FLOAT64, SemanticType.FIELD),
-]
+from datetime import timedelta
 
-with client.bulk_writer(
-    "sensor_readings",
-    columns,
-    options=WriteOptions(compression="zstd", parallelism=8, timeout_secs=60),
-) as writer:
-    rows = writer.alloc_rows(10_000)
-    rows.add_rows(
-        [
-            [1_234_567_890_000, "device_001", 23.5],
-            {"ts": 1_234_567_890_001, "device_id": "device_002", "temperature": 24.0},
-        ]
-    )
-    request_ids = writer.write_async(rows)
-    responses = writer.wait_all()
+from greptimedb_ingester import Client, WriteOptions
 
-print(request_ids)
-for response in responses:
-    print(response.request_id, response.affected_rows)
+from ddl import drop_table
+from type_samples import BULK_COLUMNS, BULK_ROW, WHEN
+
+
+def row_at(when):
+    row = list(BULK_ROW)
+    for index, column in enumerate(BULK_COLUMNS):
+        if column.name in {"ts_s", "ts_ms", "ts_us", "ts_ns"}:
+            row[index] = when
+    return row
+
+
+def main():
+    client = Client(["127.0.0.1:4001"], database="public")
+    table = "py_ingester_bulk_existing"
+    drop_table(table)
+    client.insert(table, BULK_COLUMNS, [row_at(WHEN)])
+    with client.bulk_writer(
+        table,
+        BULK_COLUMNS,
+        options=WriteOptions(compression="zstd", parallelism=8, timeout_secs=60),
+    ) as writer:
+        rows = writer.alloc_rows(1)
+        rows.add_rows([row_at(WHEN + timedelta(milliseconds=1))])
+        request_ids = writer.write_async(rows)
+        responses = writer.wait_all()
+
+    print(f"{table} request_ids={request_ids}")
+    for response in responses:
+        print(response.request_id, response.affected_rows)
+
+
+if __name__ == "__main__":
+    main()

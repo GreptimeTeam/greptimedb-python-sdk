@@ -90,7 +90,6 @@ impl BulkWriter {
         table: String,
         columns: Vec<Column>,
         options: WriteOptions,
-        auto_create_table: bool,
     ) -> PyResult<Self> {
         let (ready_tx, ready_rx) = oneshot::channel();
         let (tx, rx) = mpsc::channel(16);
@@ -111,7 +110,6 @@ impl BulkWriter {
                     thread_table,
                     thread_columns,
                     options,
-                    auto_create_table,
                     ready_tx,
                     rx,
                 ));
@@ -313,7 +311,6 @@ async fn actor(
     table: String,
     columns: Vec<Column>,
     options: WriteOptions,
-    auto_create_table: bool,
     ready: oneshot::Sender<Result<(), RemoteError>>,
     mut rx: mpsc::Receiver<Command>,
 ) {
@@ -333,11 +330,7 @@ async fn actor(
         .with_timeout(options.timeout)
         .with_parallelism(options.parallelism);
     let writer = inserter
-        .create_bulk_stream_writer_with_auto_create_table(
-            &schema,
-            Some(write_options),
-            auto_create_table,
-        )
+        .create_bulk_stream_writer(&schema, Some(write_options))
         .await;
     let mut writer = match writer {
         Ok(writer) => {
@@ -413,15 +406,6 @@ fn table_schema(
         .build()
         .map_err(|err| RemoteError::new(err.to_string(), false))?;
     for column in columns {
-        if !column.data_type.bulk_supported() {
-            return Err(RemoteError::new(
-                format!(
-                    "{} is only supported by insert(), not the bulk writer",
-                    column.data_type.name()
-                ),
-                false,
-            ));
-        }
         let dtype = column.data_type.proto();
         schema = match column.semantic_type {
             crate::types::SemanticType::Tag => schema.add_tag(column.name.clone(), dtype),
