@@ -70,4 +70,5 @@ ALL_ROW = [
 INSERT_COLUMNS = ALL_COLUMNS
 INSERT_ROW = ALL_ROW
 BULK_COLUMNS = ALL_COLUMNS
-BULK_ROW = ALL_ROW
+# Caller-supplied JSONB bytes. bulk does not encode JSON text.
+BULK_ROW = ALL_ROW[:-1] + [b"\x40\x00"]

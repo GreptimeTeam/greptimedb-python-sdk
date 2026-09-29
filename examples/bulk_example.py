@@ -10,11 +10,11 @@ from datetime import timedelta
 from greptimedb_ingester import Client, WriteOptions
 
 from ddl import drop_table
-from type_samples import BULK_COLUMNS, BULK_ROW, WHEN
+from type_samples import BULK_COLUMNS, BULK_ROW, INSERT_ROW, WHEN
 
 
-def row_at(when):
-    row = list(BULK_ROW)
+def row_at(source, when):
+    row = list(source)
     for index, column in enumerate(BULK_COLUMNS):
         if column.name in {"ts_s", "ts_ms", "ts_us", "ts_ns"}:
             row[index] = when
@@ -25,14 +25,14 @@ def main():
     client = Client(["127.0.0.1:4001"], database="public")
     table = "py_ingester_bulk_existing"
     drop_table(table)
-    client.insert(table, BULK_COLUMNS, [row_at(WHEN)])
+    client.insert(table, BULK_COLUMNS, [row_at(INSERT_ROW, WHEN)])
     with client.bulk_writer(
         table,
         BULK_COLUMNS,
         options=WriteOptions(compression="zstd", parallelism=8, timeout_secs=60),
     ) as writer:
         rows = writer.alloc_rows(1)
-        rows.add_rows([row_at(WHEN + timedelta(milliseconds=1))])
+        rows.add_rows([row_at(BULK_ROW, WHEN + timedelta(milliseconds=1))])
         request_ids = writer.write_async(rows)
         responses = writer.wait_all()
 

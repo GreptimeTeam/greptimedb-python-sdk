@@ -12,10 +12,10 @@ use greptimedb_ingester::api::v1::{
 use greptimedb_ingester::helpers::schema::{field, tag, timestamp};
 use greptimedb_ingester::helpers::values::{
     binary_value, bool_value, date_value, decimal128_value, f32_value, f64_value, i16_value,
-    i32_value, i64_value, i8_value, none_value,
-    string_value, time_microsecond_value, time_millisecond_value, time_nanosecond_value,
-    time_second_value, timestamp_microsecond_value, timestamp_millisecond_value,
-    timestamp_nanosecond_value, timestamp_second_value, u16_value, u32_value, u64_value, u8_value,
+    i32_value, i64_value, i8_value, none_value, string_value, time_microsecond_value,
+    time_millisecond_value, time_nanosecond_value, time_second_value, timestamp_microsecond_value,
+    timestamp_millisecond_value, timestamp_nanosecond_value, timestamp_second_value, u16_value,
+    u32_value, u64_value, u8_value,
 };
 use greptimedb_ingester::Value;
 
@@ -354,12 +354,7 @@ pub fn to_bulk(column: &Column, cell: &Cell) -> Result<Value, RemoteError> {
         ColumnDataType::Decimal128 => {
             Value::Decimal128(expect_decimal(cell, column.scale.expect("scale"))?)
         }
-        ColumnDataType::Json => {
-            let text = expect_json_text(cell)?;
-            serde_json::from_str::<serde_json::Value>(&text)
-                .map_err(|err| RemoteError::new(format!("invalid JSON: {err}"), false))?;
-            Value::Json(text)
-        }
+        ColumnDataType::Json => Value::Binary(expect_bytes(cell)?),
     };
     Ok(value)
 }

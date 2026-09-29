@@ -111,7 +111,7 @@ def test_every_column_type_encodes():
 def test_bulk_sample_covers_every_type():
     assert [column.name for column in BULK_COLUMNS] == [column.name for column in ALL_COLUMNS]
     encoded = dict(INSERT_ENCODED)
-    encoded["attrs"] = 'json:{"a": 1}'
+    encoded["attrs"] = "binary:4000"
     assert describe_row(BULK_COLUMNS, BULK_ROW, bulk=True) == [
         encoded[column.name] for column in BULK_COLUMNS
     ]
@@ -170,9 +170,16 @@ def test_json_accepts_objects_and_rejects_invalid_text():
     assert exc.value.retriable is False
 
 
-def test_bulk_json():
+def test_bulk_json_accepts_only_bytes():
     column = col("attrs", ColumnDataType.JSON)
-    assert describe_row([column], ['{"a":1}'], bulk=True) == ['json:{"a":1}']
+    assert describe_row([column], [b"\x40\x00"], bulk=True) == ["binary:4000"]
+    assert describe_row([column], [None], bulk=True) == ["null"]
+    with pytest.raises(GreptimeError, match="binary"):
+        describe_row([column], ['{"a":1}'], bulk=True)
+    with pytest.raises(GreptimeError, match="binary"):
+        describe_row([column], [{"a": 1}], bulk=True)
+    with pytest.raises(GreptimeError, match="json"):
+        describe_row([column], [b"\x40\x00"])
 
 
 def test_named_rows_follow_column_order():

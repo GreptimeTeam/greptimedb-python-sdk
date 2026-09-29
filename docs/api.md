@@ -199,6 +199,8 @@ Column(name, data_type, semantic_type, precision=None, scale=None)
 
 `BOOLEAN`、`INT8`、`INT16`、`INT32`、`INT64`、`UINT8`、`UINT16`、`UINT32`、`UINT64`、`FLOAT32`、`FLOAT64`、`BINARY`、`STRING`、`DATE`、`TIMESTAMP_SECOND`、`TIMESTAMP_MILLISECOND`、`TIMESTAMP_MICROSECOND`、`TIMESTAMP_NANOSECOND`、`TIME_SECOND`、`TIME_MILLISECOND`、`TIME_MICROSECOND`、`TIME_NANOSECOND`、`DECIMAL128`、`JSON`。
 
+`JSON` 列存的是 JSONB。`insert` 传 JSON 字符串或 `dict` / `list`，服务端写成 JSONB。`bulk` 只接受 `bytes`，按原样写入，不转换。
+
 ## BulkResponse
 
 | 字段 | 类型 | 说明 |

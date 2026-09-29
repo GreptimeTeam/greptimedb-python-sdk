@@ -51,6 +51,12 @@ COLUMNS = [
 ]
 
 
+def bulk_row(i, host="edge"):
+    values = row(i, host)
+    values[-1] = b"\x40\x00"
+    return values
+
+
 def row(i, host="edge"):
     when = ORIGIN + timedelta(milliseconds=i)
     second = i % 86_400
@@ -169,7 +175,7 @@ def test_bulk_requires_existing_table(client):
     table = f"py_it_missing_{uuid.uuid4().hex[:8]}"
     writer = client.bulk_writer(table, COLUMNS)
     rows = writer.alloc_rows(1)
-    rows.add_row(row(0))
+    rows.add_row(bulk_row(0))
     with pytest.raises(GreptimeError, match="not found"):
         writer.write(rows)
     with pytest.raises(GreptimeError):
@@ -185,7 +191,7 @@ def test_bulk_write_20k(client):
         options=WriteOptions(compression="lz4", parallelism=4),
     ) as writer:
         rows = writer.alloc_rows(BATCH)
-        assert rows.add_rows(row(i) for i in range(1, BATCH + 1)) == BATCH
+        assert rows.add_rows(bulk_row(i) for i in range(1, BATCH + 1)) == BATCH
         response = writer.write(rows)
         assert len(rows) == 0
     assert response.affected_rows == BATCH
@@ -201,8 +207,8 @@ def test_bulk_write_async_20k(client):
         options=WriteOptions(compression="zstd", parallelism=4),
     ) as writer:
         rows = writer.alloc_rows(BATCH)
-        rows.add_row(row(1))
-        assert rows.add_rows(row(i) for i in range(2, BATCH + 1)) == BATCH - 1
+        rows.add_row(bulk_row(1))
+        assert rows.add_rows(bulk_row(i) for i in range(2, BATCH + 1)) == BATCH - 1
         request_ids = writer.write_async(rows)
         assert request_ids
         waited = [writer.wait(request_id) for request_id in request_ids]
@@ -217,7 +223,7 @@ def test_finish_with_responses(client):
     assert client.insert(table, COLUMNS, [row(0)]) == 1
     writer = client.bulk_writer(table, COLUMNS, options=WriteOptions(parallelism=2))
     rows = writer.alloc_rows(2)
-    rows.add_rows([row(1), row(2)])
+    rows.add_rows([bulk_row(1), bulk_row(2)])
     request_ids = writer.write_async(rows)
     assert request_ids
     responses = writer.finish_with_responses()

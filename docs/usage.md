@@ -166,11 +166,13 @@ with client.bulk_writer(
 | `TIMESTAMP_SECOND` `TIMESTAMP_MILLISECOND` `TIMESTAMP_MICROSECOND` `TIMESTAMP_NANOSECOND` | 该单位下的整数，或 `datetime.datetime` |
 | `TIME_SECOND` `TIME_MILLISECOND` `TIME_MICROSECOND` `TIME_NANOSECOND` | 从午夜起、按列单位计数的 `int` |
 | `DECIMAL128` | 构造时要给 `precision` 和 `scale`。`Decimal` 按 scale 缩放，`int` 是系数 |
-| `JSON` | JSON 字符串，或 `dict` / `list` |
+| `JSON` | `insert`：JSON 字符串，或 `dict` / `list`。`bulk`：JSONB 的 `bytes` |
 
 `TIMESTAMP` 是绝对时间。`datetime.datetime` 表示一个时刻，按列的单位换算成 Unix 纪元偏移；`int` 则已经是这个单位下的偏移。没有时区的 `datetime` 当成 UTC。`datetime` 只有微秒，写到纳秒列时末三位是 0。
 
 `TIME` 是一天之内的时刻，存的是从午夜起的秒、毫秒、微秒或纳秒，不是绝对时间。所以只接受这个整数，不接受 `datetime` 或 `datetime.time`。
+
+`JSON` 列的存储是 JSONB。SQL 里没有 `JSONB` 这种类型。`insert` 传 JSON 字符串或 `dict` / `list`，服务端写成 JSONB。`bulk` 只接受 `bytes`，按原样写入，不把 JSON 文本转成 JSONB。
 
 `None` 写成 SQL NULL。时间索引不能是 NULL。普通字段上的 `TIMESTAMP_*` 可以是 NULL。
 
