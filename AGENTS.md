@@ -21,4 +21,5 @@ Python write client for GreptimeDB. Package name `greptimedb-ingester`, import `
 - Wheels are built on the target OS: Linux x86_64, Linux aarch64, Windows x64, macOS Apple Silicon. Do not cross-compile those wheels.
 - After a wheel build, install it and run `pytest`. Tests must not require a running GreptimeDB.
 - Publish to PyPI only from a `v*` tag, using `secrets.PYPI_TOKEN`. The uploaded version is `version` in `pyproject.toml`, not the tag text.
-- `pytest` covers value conversion. Live writes belong in `examples/`, which need GreptimeDB on `127.0.0.1:4001`.
+- Default `pytest` skips tests marked `integration` and must not require GreptimeDB.
+- CI job `integration` starts GreptimeDB and runs `pytest -m integration` on Linux. Cover `insert` (including TAG on auto-create), `delete`, and `bulk` into an existing table.

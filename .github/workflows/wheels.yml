@@ -54,12 +54,45 @@ jobs:
         run: |
           python -m pip install --no-index --find-links dist greptimedb-ingester
           python -m pip install pytest
-          python -m pytest
+          python -m pytest -o addopts=
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.platform.name }}
           path: dist/*.whl
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start GreptimeDB
+        run: |
+          docker run -d --name greptimedb -p 4000:4000 -p 4001:4001 \
+            greptime/greptimedb:latest \
+            standalone start --http-addr 0.0.0.0:4000 --rpc-bind-addr 0.0.0.0:4001
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4000/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs greptimedb
+          exit 1
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Integration tests
+        env:
+          GREPTIMEDB_GRPC: 127.0.0.1:4001
+          GREPTIMEDB_HTTP: http://127.0.0.1:4000
+        run: |
+          uv python pin 3.10
+          uv sync --group dev
+          uv run maturin develop
+          uv run pytest -m integration -o addopts=
 
   release:
     if: startsWith(github.ref, 'refs/tags/')

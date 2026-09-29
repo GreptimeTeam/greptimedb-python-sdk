@@ -33,6 +33,8 @@ features = ["pyo3/extension-module"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["examples"]
+addopts = "-m 'not integration'"
+markers = ["integration: write tests that need GREPTIMEDB_GRPC"]
 
 [tool.uv]
 cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }, { file = "src/**/*.rs" }]
