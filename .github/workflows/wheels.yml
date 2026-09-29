@@ -13,29 +13,29 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.platform.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - name: linux-x86_64
+            os: ubuntu-latest
             target: x86_64
             manylinux: "2_28"
-            test: true
           - name: linux-aarch64
+            os: ubuntu-24.04-arm
             target: aarch64
             manylinux: "2_28"
-            test: false
           - name: windows-x64
-            target: x86_64-pc-windows-msvc
+            os: windows-latest
+            target: x64
             manylinux: "off"
-            test: false
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64
+            manylinux: "off"
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install llvm-dlltool
-        if: matrix.platform.target == 'x86_64-pc-windows-msvc'
-        run: sudo apt-get update && sudo apt-get install -y llvm
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1
@@ -46,13 +46,11 @@ jobs:
           sccache: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
 
       - name: Set up Python
-        if: matrix.platform.test
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Run tests
-        if: matrix.platform.test
+      - name: Smoke test
         run: |
           python -m pip install --no-index --find-links dist greptimedb-ingester
           python -m pip install pytest

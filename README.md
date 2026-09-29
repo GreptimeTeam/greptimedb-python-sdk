@@ -18,6 +18,7 @@ GreptimeDB 的 Python 写入客户端，绑定 [greptimedb-ingester](https://git
 | Linux x86_64，glibc 2.28 及以上 | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl` |
 | Linux aarch64，glibc 2.28 及以上 | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_aarch64.whl` |
 | Windows x64 | `greptimedb_ingester-0.1.0-cp310-abi3-win_amd64.whl` |
+| macOS Apple Silicon | `greptimedb_ingester-0.1.0-cp310-abi3-macosx_11_0_arm64.whl` |
 
 下面用 Linux x86_64 的文件名作例子。换成上表里和本机系统匹配的那个文件即可。
 
