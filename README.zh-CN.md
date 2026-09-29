@@ -41,9 +41,16 @@ pip install -r requirements.txt
 uv pip install -r requirements.txt
 ```
 
-安装器会按本机系统和 CPU 选择 wheel。一个 wheel 可以给该系统上的 Python 3.10、3.11、3.12……使用。
+安装器会下载和本机系统、CPU 匹配的 wheel。一个 wheel 可以给该系统上的 Python 3.10、3.11、3.12……使用。不用自己下载 wheel。
 
-也可以从 [GitHub Release](https://github.com/GreptimeTeam/greptimedb-python-sdk/releases) 下载 wheel 再安装。
+支持的架构：
+
+- Linux x86_64，glibc 2.28 及以上
+- Linux aarch64，glibc 2.28 及以上
+- Windows x64
+- macOS arm64（Apple Silicon）
+
+已发布的 wheel：
 
 | 系统 | wheel |
 | --- | --- |
@@ -51,44 +58,6 @@ uv pip install -r requirements.txt
 | Linux aarch64，glibc 2.28 及以上 | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_aarch64.whl` |
 | Windows x64 | `greptimedb_ingester-0.1.0-cp310-abi3-win_amd64.whl` |
 | macOS Apple Silicon | `greptimedb_ingester-0.1.0-cp310-abi3-macosx_11_0_arm64.whl` |
-
-下面用 Linux x86_64 的文件名作例子。换成上表里和本机系统匹配的那个文件即可。
-
-pip：
-
-```bash
-pip install greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-uv：
-
-```bash
-uv add greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-已经有虚拟环境、只想装进当前环境时：
-
-```bash
-uv pip install greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-`requirements.txt` 里写 wheel 的路径：
-
-```text
-./greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-然后：
-
-```bash
-pip install -r requirements.txt
-```
-
-或：
-
-```bash
-uv pip install -r requirements.txt
-```
 
 从源码安装需要 Rust 1.85 及以上：
 

@@ -14,3 +14,4 @@ build/
 *.so
 *.pyd
 .maturin/
+test/

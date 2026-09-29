@@ -41,9 +41,16 @@ or:
 uv pip install -r requirements.txt
 ```
 
-The installer picks the wheel for the local OS and CPU. One wheel covers Python 3.10, 3.11, 3.12, and later on that platform.
+The installer downloads the wheel for the local OS and CPU. One wheel covers Python 3.10, 3.11, 3.12, and later on that platform. You do not download a wheel yourself.
 
-You can also download a wheel from the [GitHub Release](https://github.com/GreptimeTeam/greptimedb-python-sdk/releases).
+Supported architectures:
+
+- Linux x86_64, glibc 2.28 or later
+- Linux aarch64, glibc 2.28 or later
+- Windows x64
+- macOS arm64 (Apple Silicon)
+
+Published wheels:
 
 | Platform | wheel |
 | --- | --- |
@@ -51,44 +58,6 @@ You can also download a wheel from the [GitHub Release](https://github.com/Grept
 | Linux aarch64, glibc 2.28 or later | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_aarch64.whl` |
 | Windows x64 | `greptimedb_ingester-0.1.0-cp310-abi3-win_amd64.whl` |
 | macOS Apple Silicon | `greptimedb_ingester-0.1.0-cp310-abi3-macosx_11_0_arm64.whl` |
-
-The examples below use the Linux x86_64 filename. Substitute the file that matches the local platform.
-
-pip:
-
-```bash
-pip install greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-uv:
-
-```bash
-uv add greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-To install into an existing virtual environment:
-
-```bash
-uv pip install greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-Put the wheel path in `requirements.txt`:
-
-```text
-./greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-Then:
-
-```bash
-pip install -r requirements.txt
-```
-
-or:
-
-```bash
-uv pip install -r requirements.txt
-```
 
 Building from source requires Rust 1.85 or later:
 
