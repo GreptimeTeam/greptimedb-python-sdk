@@ -7,7 +7,7 @@ GreptimeDB 的 Python 写入客户端。支持 Python 3.10 及以上。调用是
 - `Client.insert`：gRPC 行写入。服务端可以按请求里的 schema 自动建表。
 - `Client.bulk_writer`：Arrow Flight 批量写入。不会建表，表必须已经存在。
 
-gRPC 端口默认是 `127.0.0.1:4001`，不是 HTTP 的 `4000`。
+gRPC 端口默认是 `127.0.0.1:4001`，不是 HTTP 的 `4000`。接口说明见 [api.md](api.md)。
 
 ## 安装
 
