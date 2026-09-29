@@ -16,7 +16,7 @@ use crate::types::{BulkResponse, Column, WriteOptions};
 
 enum Command {
     Write {
-        rows: Vec<Vec<Cell>>,
+        rows: Vec<Row>,
         wait: bool,
         reply: oneshot::Sender<Result<WriteOutcome, RemoteError>>,
     },
@@ -223,12 +223,15 @@ impl BulkWriter {
         if rows.rows.is_empty() {
             return Err(raise("cannot write an empty row batch", false));
         }
+        let mut batch = Vec::with_capacity(rows.rows.len());
         for row in &rows.rows {
+            let mut values = Vec::with_capacity(self.columns.len());
             for (column, cell) in self.columns.iter().zip(row.iter()) {
-                to_bulk(column, cell)?;
+                values.push(to_bulk(column, cell)?);
             }
+            batch.push(Row::from_values(values));
         }
-        let batch = std::mem::take(&mut rows.rows);
+        rows.rows.clear();
         self.call(py, |reply| Command::Write {
             rows: batch,
             wait,
@@ -346,7 +349,7 @@ async fn actor(
     while let Some(command) = rx.recv().await {
         match command {
             Command::Write { rows, wait, reply } => {
-                let result = write_rows(&mut writer, &columns, rows, wait).await;
+                let result = write_rows(&mut writer, rows, wait).await;
                 let _ = reply.send(result);
             }
             Command::Wait { request_id, reply } => {
@@ -429,21 +432,14 @@ fn table_schema(
 
 async fn write_rows(
     writer: &mut BulkStreamWriter,
-    columns: &[Column],
-    rows: Vec<Vec<Cell>>,
+    rows: Vec<Row>,
     wait: bool,
 ) -> Result<WriteOutcome, RemoteError> {
     let mut buffer = writer
         .alloc_rows_buffer(rows.len())
         .map_err(RemoteError::from)?;
     for row in rows {
-        let mut values = Vec::with_capacity(columns.len());
-        for (column, cell) in columns.iter().zip(row.iter()) {
-            values.push(to_bulk(column, cell)?);
-        }
-        buffer
-            .add_row(Row::from_values(values))
-            .map_err(RemoteError::from)?;
+        buffer.add_row(row).map_err(RemoteError::from)?;
     }
     if wait {
         let response = writer.write_rows(buffer).await.map_err(RemoteError::from)?;

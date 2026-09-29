@@ -250,7 +250,7 @@ pub fn to_proto(
     cell: &Cell,
 ) -> Result<greptimedb_ingester::api::v1::Value, RemoteError> {
     if matches!(cell, Cell::Null) {
-        if column.semantic_type == SemanticType::Timestamp || column.data_type.is_timestamp() {
+        if column.semantic_type == SemanticType::Timestamp {
             return Err(RemoteError::new(
                 format!("timestamp column {} cannot be null", column.name),
                 false,
@@ -308,7 +308,7 @@ pub fn to_proto(
 
 pub fn to_bulk(column: &Column, cell: &Cell) -> Result<Value, RemoteError> {
     if matches!(cell, Cell::Null) {
-        if column.semantic_type == SemanticType::Timestamp || column.data_type.is_timestamp() {
+        if column.semantic_type == SemanticType::Timestamp {
             return Err(RemoteError::new(
                 format!("timestamp column {} cannot be null", column.name),
                 false,

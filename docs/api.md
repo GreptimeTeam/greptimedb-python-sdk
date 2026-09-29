@@ -64,7 +64,7 @@ insert(table, columns, rows, hints=None) -> int
 delete(table, columns, rows) -> int
 ```
 
-按 `columns` 和 `rows` 删除。返回删除行数。行的写法和 `insert` 相同。
+按 `columns` 和 `rows` 删除。返回删除行数。`columns` 是 TAG 和时间索引，不是 FIELD。每一行的写法和 `insert` 相同。
 
 ### bulk_writer
 

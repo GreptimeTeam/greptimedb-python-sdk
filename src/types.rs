@@ -143,16 +143,6 @@ impl ColumnDataType {
         }
     }
 
-    pub fn is_timestamp(self) -> bool {
-        matches!(
-            self,
-            Self::TimestampSecond
-                | Self::TimestampMillisecond
-                | Self::TimestampMicrosecond
-                | Self::TimestampNanosecond
-        )
-    }
-
     pub fn name(self) -> &'static str {
         match self {
             Self::Boolean => "boolean",

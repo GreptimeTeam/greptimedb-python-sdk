@@ -122,6 +122,14 @@ def test_null_timestamp_is_rejected():
     with pytest.raises(GreptimeError, match="cannot be null") as exc:
         describe_row(columns, [None])
     assert exc.value.retriable is False
+    with pytest.raises(GreptimeError, match="cannot be null"):
+        describe_row(columns, [None], bulk=True)
+
+
+def test_null_timestamp_field_is_allowed():
+    column = col("seen_at", ColumnDataType.TIMESTAMP_MILLISECOND, SemanticType.FIELD)
+    assert describe_row([column], [None]) == ["null"]
+    assert describe_row([column], [None], bulk=True) == ["null"]
 
 
 def test_decimal128_scale():

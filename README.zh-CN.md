@@ -1,31 +1,31 @@
 # greptimedb-ingester
 
-[中文](README.zh-CN.md)
+[English](README.md)
 
-Python write client for GreptimeDB, binding [greptimedb-ingester](https://github.com/GreptimeTeam/greptimedb-ingester-rust) 0.19.0. Python 3.10 and later. Calls are synchronous.
+GreptimeDB 的 Python 写入客户端，绑定 [greptimedb-ingester](https://github.com/GreptimeTeam/greptimedb-ingester-rust) 0.19.0。支持 Python 3.10 及以上。调用是同步的。
 
-- `Client.insert`: gRPC row writes. If the table does not exist, GreptimeDB creates it from the schema in the request.
-- `Client.bulk_writer`: Arrow Flight bulk writes. The table must already exist.
+- `Client.insert`：gRPC 行写入。表不存在时，按请求里的 schema 建表。
+- `Client.bulk_writer`：Arrow Flight 批量写入。表必须已经存在。
 
-The client connects to the gRPC port, `127.0.0.1:4001` by default.
+连接的是 gRPC 端口，默认 `127.0.0.1:4001`。
 
-See [docs/usage.md](docs/usage.md) for the full guide and [docs/api.md](docs/api.md) for the API reference.
+完整用法见 [docs/usage.md](docs/usage.md)。接口说明见 [docs/api.md](docs/api.md)。
 
-## Install
+## 安装
 
-pip:
+pip：
 
 ```bash
 pip install greptimedb-ingester
 ```
 
-uv:
+uv：
 
 ```bash
 uv add greptimedb-ingester
 ```
 
-`requirements.txt`:
+`requirements.txt`：
 
 ```text
 greptimedb-ingester
@@ -35,62 +35,62 @@ greptimedb-ingester
 pip install -r requirements.txt
 ```
 
-or:
+或：
 
 ```bash
 uv pip install -r requirements.txt
 ```
 
-The installer picks the wheel for the local OS and CPU. One wheel covers Python 3.10, 3.11, 3.12, and later on that platform.
+安装器会按本机系统和 CPU 选择 wheel。一个 wheel 可以给该系统上的 Python 3.10、3.11、3.12……使用。
 
-You can also download a wheel from the [GitHub Release](https://github.com/GreptimeTeam/greptimedb-python-sdk/releases).
+也可以从 [GitHub Release](https://github.com/GreptimeTeam/greptimedb-python-sdk/releases) 下载 wheel 再安装。
 
-| Platform | wheel |
+| 系统 | wheel |
 | --- | --- |
-| Linux x86_64, glibc 2.28 or later | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl` |
-| Linux aarch64, glibc 2.28 or later | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_aarch64.whl` |
+| Linux x86_64，glibc 2.28 及以上 | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl` |
+| Linux aarch64，glibc 2.28 及以上 | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_aarch64.whl` |
 | Windows x64 | `greptimedb_ingester-0.1.0-cp310-abi3-win_amd64.whl` |
 | macOS Apple Silicon | `greptimedb_ingester-0.1.0-cp310-abi3-macosx_11_0_arm64.whl` |
 
-The examples below use the Linux x86_64 filename. Substitute the file that matches the local platform.
+下面用 Linux x86_64 的文件名作例子。换成上表里和本机系统匹配的那个文件即可。
 
-pip:
+pip：
 
 ```bash
 pip install greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
 ```
 
-uv:
+uv：
 
 ```bash
 uv add greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
 ```
 
-To install into an existing virtual environment:
+已经有虚拟环境、只想装进当前环境时：
 
 ```bash
 uv pip install greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
 ```
 
-Put the wheel path in `requirements.txt`:
+`requirements.txt` 里写 wheel 的路径：
 
 ```text
 ./greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
 ```
 
-Then:
+然后：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-or:
+或：
 
 ```bash
 uv pip install -r requirements.txt
 ```
 
-Building from source requires Rust 1.85 or later:
+从源码安装需要 Rust 1.85 及以上：
 
 ```bash
 pip install maturin
@@ -98,7 +98,7 @@ maturin build --release
 pip install dist/greptimedb_ingester-*.whl
 ```
 
-## Write
+## 写入
 
 ```python
 from datetime import datetime, timezone
@@ -122,9 +122,9 @@ affected = client.insert(
 print(affected)
 ```
 
-If `sensor_data` does not exist, this `insert` creates it. `examples/insert_example.py` also writes into a table that already exists. Bulk writes are in `examples/bulk_example.py`; the table must already exist.
+表不存在时，这次 `insert` 会建表。`examples/insert_example.py` 里还有写入已有表的例子。批量写入见 `examples/bulk_example.py`，要先有表。
 
-## Development
+## 开发
 
 ```bash
 uv python pin 3.10
@@ -133,4 +133,4 @@ uv run maturin develop
 uv run pytest
 ```
 
-`pytest` checks value conversion only. It does not connect to GreptimeDB.
+`pytest` 只检查值转换，不连接 GreptimeDB。

@@ -97,10 +97,17 @@ client.insert(
 )
 ```
 
-`delete` 用同一套列和行，把它们当成 key 列删掉。
+`delete` 的列是 TAG 和时间索引。FIELD 不能当删除键。
 
 ```python
-client.delete("sensor_data", columns, [["device_001", 1_234_567_890_000, 23.5]])
+client.delete(
+    "sensor_data",
+    [
+        Column("device_id", ColumnDataType.STRING, SemanticType.TAG),
+        Column("ts", ColumnDataType.TIMESTAMP_MILLISECOND, SemanticType.TIMESTAMP),
+    ],
+    [["device_001", 1_234_567_890_000]],
+)
 ```
 
 ## 批量写入
@@ -165,7 +172,7 @@ with client.bulk_writer(
 
 `TIME` 是一天之内的时刻，存的是从午夜起的秒、毫秒、微秒或纳秒，不是绝对时间。所以只接受这个整数，不接受 `datetime` 或 `datetime.time`。
 
-`None` 写成 SQL NULL。时间戳列不能是 NULL。
+`None` 写成 SQL NULL。时间索引不能是 NULL。普通字段上的 `TIMESTAMP_*` 可以是 NULL。
 
 每种类型一个值。四种 `TIMESTAMP` 都能当时间戳列，一张表里只放其中一个。
 
