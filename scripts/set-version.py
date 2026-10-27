@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Set this package's version in three fixed lines, then compile.
-
-Cargo rewrites Cargo.lock from Cargo.toml during that compile. This script
-does not edit the lock file itself.
-"""
+"""Keep facade, native plugin and their exact optional dependency in sync."""
 
 import subprocess
 import sys
@@ -25,19 +21,32 @@ def set_first_line(path, prefix, new_line):
 
 def main():
     if len(sys.argv) != 2:
-        raise SystemExit("usage: uv run python scripts/set-version.py 0.1.1")
+        raise SystemExit("usage: uv run python scripts/set-version.py 0.1.2")
     version = sys.argv[1]
     parts = version.split(".")
     if len(parts) != 3 or not all(part.isdigit() for part in parts):
-        raise SystemExit("version must look like 0.1.1")
-    set_first_line("pyproject.toml", 'version = "', f'version = "{version}"')
-    set_first_line("Cargo.toml", 'version = "', f'version = "{version}"')
-    set_first_line(
+        raise SystemExit("version must look like 0.1.2")
+    for path in [
+        "pyproject.toml",
+        "packages/grpc/pyproject.toml",
+        "packages/grpc/Cargo.toml",
+    ]:
+        set_first_line(path, 'version = "', f'version = "{version}"')
+    for path in [
         "python/greptimedb_ingester/__init__.py",
-        '__version__ = "',
-        f'__version__ = "{version}"',
+        "packages/grpc/python/greptimedb_ingester_grpc/__init__.py",
+    ]:
+        set_first_line(path, '__version__ = "', f'__version__ = "{version}"')
+    set_first_line(
+        "pyproject.toml", "grpc = [", f'grpc = ["greptimedb-ingester-grpc=={version}"]'
     )
-    subprocess.run(["cargo", "check", "--offline"], cwd=ROOT, check=True)
+    subprocess.run(
+        ["cargo", "check", "--manifest-path", "packages/grpc/Cargo.toml", "--offline"],
+        cwd=ROOT,
+        check=True,
+    )
+    subprocess.run(["uv", "lock"], cwd=ROOT, check=True)
+    subprocess.run(["uv", "lock", "--project", "packages/grpc"], cwd=ROOT, check=True)
     print(version)
 
 

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "greptimedb-ingester-grpc"
+version = "0.1.1"
+description = "Internal native backend for greptimedb-ingester[grpc]"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+
+[dependency-groups]
+dev = ["maturin>=1.8,<2.0"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "greptimedb_ingester_grpc._native"
+features = ["pyo3/extension-module"]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }, { file = "src/**/*.rs" }, { file = "python/**/*.py" }]

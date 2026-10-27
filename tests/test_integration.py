@@ -13,6 +13,8 @@ from decimal import Decimal
 
 import pytest
 
+pytest.importorskip("greptimedb_ingester_grpc")
+
 from greptimedb_ingester import Client, Column, ColumnDataType, GreptimeError, SemanticType, WriteOptions
 
 pytestmark = pytest.mark.integration

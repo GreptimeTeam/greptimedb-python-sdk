@@ -2,104 +2,60 @@
 
 [English](README.md)
 
-GreptimeDB 的 Python 写入客户端，绑定 [greptimedb-ingester](https://github.com/GreptimeTeam/greptimedb-ingester-rust) 0.19.0。支持 Python 3.10 及以上。调用是同步的。
-
-- `Client.insert`：gRPC 行写入。表不存在时，按请求里的 schema 建表。
-- `Client.bulk_writer`：Arrow Flight 批量写入。表必须已经存在。
-
-连接的是 gRPC 端口，默认 `127.0.0.1:4001`。
-
-完整用法见 [docs/usage.md](docs/usage.md)。接口说明见 [docs/api.md](docs/api.md)。
+GreptimeDB 同步 Python 写入客户端，支持 Python 3.10+。
 
 ## 安装
 
-pip：
-
 ```bash
-pip install greptimedb-ingester
+uv add "greptimedb-ingester[postgres]"       # PostgreSQL COPY
+uv add "greptimedb-ingester[grpc]"           # gRPC
+uv add "greptimedb-ingester[grpc,postgres]"  # 两种后端
 ```
 
-uv：
+也可用 `pip install` 安装相同依赖，写入 `requirements.txt` 时不加引号。
+至少选择一种后端；`[postgres]` 使用 psycopg2，不依赖 Rust SDK。
 
-```bash
-uv add greptimedb-ingester
-```
-
-`requirements.txt`：
-
-```text
-greptimedb-ingester
-```
-
-```bash
-pip install -r requirements.txt
-```
-
-或：
-
-```bash
-uv pip install -r requirements.txt
-```
-
-安装器会下载和本机系统、CPU 匹配的 wheel。一个 wheel 可以给该系统上的 Python 3.10、3.11、3.12……使用。不用自己下载 wheel。
-
-支持的架构：
-
-- Linux x86_64，glibc 2.28 及以上
-- Linux aarch64，glibc 2.28 及以上
-- Windows x64
-- macOS arm64（Apple Silicon）
-
-已发布的 wheel：
-
-| 系统 | wheel |
-| --- | --- |
-| Linux x86_64，glibc 2.28 及以上 | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl` |
-| Linux aarch64，glibc 2.28 及以上 | `greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_aarch64.whl` |
-| Windows x64 | `greptimedb_ingester-0.1.0-cp310-abi3-win_amd64.whl` |
-| macOS Apple Silicon | `greptimedb_ingester-0.1.0-cp310-abi3-macosx_11_0_arm64.whl` |
-
-从源码安装需要 Rust 1.85 及以上：
-
-```bash
-pip install maturin
-maturin build --release
-pip install dist/greptimedb_ingester-*.whl
-```
-
-## 写入
+## PostgreSQL COPY
 
 ```python
-from datetime import datetime, timezone
+from greptimedb_ingester import Column, ColumnDataType as D, SemanticType as S
+from greptimedb_ingester.postgres import Client
 
-from greptimedb_ingester import Client, Column, ColumnDataType, SemanticType
-
-client = Client(["127.0.0.1:4001"], database="public")
-
-affected = client.insert(
-    "sensor_data",
-    columns=[
-        Column("device_id", ColumnDataType.STRING, SemanticType.TAG),
-        Column("ts", ColumnDataType.TIMESTAMP_MILLISECOND, SemanticType.TIMESTAMP),
-        Column("temperature", ColumnDataType.FLOAT64, SemanticType.FIELD),
-    ],
-    rows=[
-        ["device_001", datetime(2009, 2, 13, 23, 31, 30, tzinfo=timezone.utc), 23.5],
-        {"device_id": "device_002", "ts": 1_234_567_890_001, "temperature": 24.0},
-    ],
-)
+columns = [
+    Column("host", D.STRING, S.TAG),
+    Column("ts", D.TIMESTAMP_MILLISECOND, S.TIMESTAMP),
+    Column("reading", D.FLOAT64, S.FIELD),
+]
+with Client(["127.0.0.1:4003"], batch_size=5000) as client:
+    affected = client.insert("sensor_data", columns, [
+        ["edge", 1793066400000, 23.5],
+    ])
 print(affected)
 ```
 
-表不存在时，这次 `insert` 会建表。`examples/insert_example.py` 里还有写入已有表的例子。批量写入见 `examples/bulk_example.py`，要先有表。
+`insert` 自动创建不存在的表并分批 COPY，默认每批 10,000 行。
+各批独立提交。服务端须支持 `COPY FROM STDIN`。
+支持类型和时间戳规则见 [API](docs/api.md#postgresql-copy-后端)。
+
+## gRPC
+
+```python
+from greptimedb_ingester.grpc import Client
+
+client = Client(["127.0.0.1:4001"], database="public")
+# client.insert(table, columns, rows)
+```
+
+支持 `insert`、`delete` 和 `bulk_writer`，详见 [使用指南](docs/usage.md) 和 [示例](examples)。
+两种后端都安装时，顶层 `Client` 默认 gRPC；
+使用上面的显式导入选择后端。
 
 ## 开发
 
 ```bash
-uv python pin 3.10
-uv sync --group dev
-uv run maturin develop
-uv run pytest
+uv sync --python 3.10 --locked --extra postgres
+uv run --extra postgres pytest
 ```
 
-`pytest` 只检查值转换，不连接 GreptimeDB。
+开发两种后端时，将 `--extra postgres` 换成 `--all-extras`，需要 Rust 1.85+。
+集成测试与发布流程见 [测试文档](docs/testing.md)。
