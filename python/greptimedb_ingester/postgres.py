@@ -390,7 +390,14 @@ class Client:
                     return affected
                 buffer = io.StringIO(newline="")
                 writer = csv.writer(buffer)
-                for row in batch:
+                first_row = encode_row(batch[0])
+                # The CSV decoder strips a BOM at the start of each COPY stream.
+                # Quote that row so a leading U+FEFF remains part of the value.
+                if isinstance(first_row[0], str) and first_row[0].startswith("\ufeff"):
+                    csv.writer(buffer, quoting=csv.QUOTE_ALL).writerow(first_row)
+                else:
+                    writer.writerow(first_row)
+                for row in islice(batch, 1, None):
                     writer.writerow(encode_row(row))
                 buffer.seek(0)
                 try:

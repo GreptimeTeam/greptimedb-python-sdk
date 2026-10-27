@@ -128,6 +128,39 @@ def test_batches_dict_rows_csv_escaping_and_inputs_are_preserved(database):
     assert rows == before
 
 
+@pytest.mark.parametrize("batch_size", [1, 2, 3])
+def test_bom_at_copy_batch_boundaries_preserves_values(database, batch_size):
+    _, cur, _, _ = database
+    actual = []
+
+    def copy(command, data):
+        # GreptimeDB consumes a UTF-8 BOM at the start of each CSV stream.
+        text = data.read().encode("utf-8").decode("utf-8-sig")
+        batch = list(csv.reader(io.StringIO(text)))
+        actual.extend(batch)
+        cur.rowcount = len(batch)
+
+    cur.copy_expert.side_effect = copy
+    hosts = [
+        "\ufeffvalue",
+        "\ufeff",
+        "随意\ufeff",
+        '\ufeff"quoted",\nline',
+        None,
+        "value",
+        "\ufefftail",
+    ]
+    rows = [{"host": host, "ts": 0, "value": i} for i, host in enumerate(hosts)]
+    before = deepcopy(rows)
+    with pg.Client("localhost:4003", batch_size=batch_size) as client:
+        assert client.insert("bom_values", COLUMNS, iter(rows)) == len(rows)
+    assert [row[0] for row in actual] == [
+        host if host is not None else "" for host in hosts
+    ]
+    assert [row[2] for row in actual] == [str(i) for i in range(len(rows))]
+    assert rows == before
+
+
 @pytest.mark.parametrize(
     "rows",
     [

@@ -59,14 +59,7 @@ jobs:
         with:
           name: facade-distributions
           path: dist/core
-      - name: Build native plugin on its target platform
-        uses: PyO3/maturin-action@v1
-        with:
-          working-directory: packages/grpc
-          target: ${{ matrix.platform.target }}
-          manylinux: ${{ matrix.platform.manylinux }}
-          args: --release --locked --out ../../dist/grpc --compatibility pypi
-          sccache: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
+      # Create the output directory as the runner before the root-owned manylinux build.
       - name: Build native source archive
         if: matrix.platform.name == 'linux-x86_64'
         uses: PyO3/maturin-action@v1
@@ -76,6 +69,14 @@ jobs:
           working-directory: packages/grpc
           command: sdist
           args: --out ../../dist/grpc
+      - name: Build native plugin on its target platform
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: packages/grpc
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --locked --out ../../dist/grpc --compatibility pypi
+          sccache: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"

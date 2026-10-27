@@ -155,6 +155,42 @@ def test_insert_20k_all_types_creates_table_tags_and_reads_every_row(
     assert count(query, table) == size + 1
 
 
+@pytest.mark.parametrize("batch_size", [1, 2, 3])
+@pytest.mark.parametrize("semantic_type", [S.TAG, S.FIELD])
+def test_bom_strings_round_trip_across_batches(query, table, batch_size, semantic_type):
+    columns = [
+        Column("text", D.STRING, semantic_type),
+        Column("ts", D.TIMESTAMP_MILLISECOND, S.TIMESTAMP),
+        Column("seq", D.INT64, S.FIELD),
+        Column("note", D.STRING, S.FIELD),
+    ]
+    texts = [
+        "\ufeffvalue",
+        "\ufeff",
+        "中间\ufeff字符",
+        '\ufeff"quoted",\nline',
+        None,
+        "value",
+        "\ufefftail",
+    ]
+    rows = [
+        [text, BASE_MS + i, i, None if i % 2 == 0 else "\ufeffnote"]
+        for i, text in enumerate(texts)
+    ]
+    if semantic_type == S.TAG:
+        # Distinct tags at the same timestamp must not collapse to one row.
+        rows[5][1] = rows[0][1]
+    with Client(os.environ["GREPTIMEDB_POSTGRES"], batch_size=batch_size) as client:
+        assert client.insert(table, columns, iter(rows)) == len(rows)
+    actual = records(
+        query,
+        sql.SQL(
+            "SELECT text, CAST(ts AS BIGINT) AS epoch_ms, seq, note FROM {} ORDER BY seq"
+        ).format(sql.Identifier(table)),
+    )
+    assert actual == [tuple(row) for row in rows]
+
+
 def test_existing_table_schema_is_preserved(client, query, table):
     with query.cursor() as cur:
         cur.execute(
