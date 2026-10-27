@@ -1,6 +1,7 @@
 """COPY insert integration tests; require GREPTIMEDB_POSTGRES."""
 
 import os
+import socket
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -280,3 +281,24 @@ def test_tag_time_keys_and_overwrite(client, query, table):
         query,
         sql.SQL("SELECT host, seq FROM {} ORDER BY host").format(sql.Identifier(table)),
     ) == [("a", 3), ("b", 2)]
+
+
+def test_client_reconnects_after_socket_disconnection(client, query, table):
+    columns = COLUMNS[:3]
+    assert client.insert(table, columns, [["a", BASE_MS, 1]]) == 1
+    # Interrupt only this client's TCP stream; leave the server and query
+    # connection running. psycopg2 retains ownership of the file descriptor.
+    stream = socket.socket(fileno=client._conn.fileno())
+    try:
+        stream.shutdown(socket.SHUT_RDWR)
+    finally:
+        stream.detach()
+    with pytest.raises(GreptimeError) as exc:
+        client.health_check()
+    assert exc.value.retriable is True
+    assert client.insert(table, columns, [["a", BASE_MS + 1, 2]]) == 1
+    client.health_check()
+    assert records(
+        query,
+        sql.SQL("SELECT seq FROM {} ORDER BY seq").format(sql.Identifier(table)),
+    ) == [(1,), (2,)]

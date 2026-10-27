@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "greptimedb-ingester"
-version = "0.1.1"
+version = "0.1.2"
 description = "GreptimeDB Python client with optional gRPC and PostgreSQL COPY backends"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,7 +16,7 @@ keywords = ["greptimedb", "database", "ingest", "grpc", "postgres"]
 Repository = "https://github.com/GreptimeTeam/greptimedb-python-sdk"
 
 [project.optional-dependencies]
-grpc = ["greptimedb-ingester-grpc==0.1.1"]
+grpc = ["greptimedb-ingester-grpc==0.1.2"]
 postgres = ["psycopg2-binary>=2.9.10,<3"]
 
 [dependency-groups]

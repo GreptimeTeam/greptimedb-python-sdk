@@ -70,6 +70,8 @@ jobs:
       - name: Build native source archive
         if: matrix.platform.name == 'linux-x86_64'
         uses: PyO3/maturin-action@v1
+        env:
+          RUSTC_WRAPPER: ""
         with:
           working-directory: packages/grpc
           command: sdist
@@ -114,9 +116,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.10"
+          enable-cache: false
       - name: Test installed postgres extra without Rust SDK
         run: |
-          wheel=$(find "$PWD/dist/core" -name '*.whl' -print -quit)
+          wheel=$(python -c "from pathlib import Path; print(next(Path('dist/core').glob('*.whl')).resolve(), end='')")
           uv run --no-cache --isolated --no-project --python 3.10 --with "${wheel}[postgres]" --with pytest python -m pytest -m 'not integration' -o addopts= -v
           uv run --no-cache --isolated --no-project --python 3.10 --with "${wheel}[postgres]" python -c "from importlib.util import find_spec; import greptimedb_ingester; assert find_spec('greptimedb_ingester_grpc') is None"
 
@@ -129,6 +132,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.10"
+          enable-cache: false
       - uses: actions/download-artifact@v4
         with:
           name: facade-distributions
@@ -168,6 +172,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.10"
+          enable-cache: false
       - uses: actions/download-artifact@v4
         with:
           name: facade-distributions

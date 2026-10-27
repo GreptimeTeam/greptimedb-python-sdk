@@ -25,7 +25,7 @@ wheels = [
 
 [[package]]
 name = "greptimedb-ingester"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -53,7 +53,7 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "greptimedb-ingester-grpc"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "packages/grpc" }
 
 [package.metadata]

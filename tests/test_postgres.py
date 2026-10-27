@@ -29,7 +29,7 @@ COLUMNS = [
 
 @pytest.fixture
 def database(monkeypatch):
-    connection = MagicMock()
+    connection = MagicMock(closed=0)
     cursor = connection.cursor.return_value.__enter__.return_value
     payloads = []
 
@@ -526,3 +526,92 @@ def test_closing_unused_client_does_not_create_a_connection(database):
         client.insert("closed", COLUMNS, [["a", 0, 1]])
     connect.assert_not_called()
     conn.close.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "endpoint,options,expected",
+    [
+        ("postgresql://localhost:4003/production", {}, "production"),
+        ("postgresql://localhost:4003/production", {"database": None}, "production"),
+        ("postgresql://localhost:4003/production", {"database": "public"}, "public"),
+        ("localhost:4003", {}, "public"),
+        ("postgresql://localhost:4003/", {}, "public"),
+        ("localhost:4003", {"database": "production"}, "production"),
+    ],
+)
+def test_database_uses_explicit_argument_then_uri_then_default(
+    database, endpoint, options, expected
+):
+    _, _, connect, _ = database
+    with pg.Client(endpoint, **options) as client:
+        assert client.database == expected
+        client.health_check()
+    assert connect.call_args.kwargs["dbname"] == expected
+
+
+def test_broken_copy_connection_reopens_on_next_call_without_resending(database):
+    conn, cur, connect, payloads = database
+    healthy = MagicMock(closed=0)
+    healthy_cur = healthy.cursor.return_value.__enter__.return_value
+    healthy_cur.rowcount = 1
+    recovered_payloads = []
+    healthy_cur.copy_expert.side_effect = lambda command, data: (
+        recovered_payloads.extend(csv.reader(io.StringIO(data.read())))
+    )
+    connect.side_effect = [conn, healthy]
+    success = cur.copy_expert.side_effect
+    pulled = []
+
+    def copy(command, data):
+        if payloads:
+            conn.closed = 2
+            raise pg.psycopg2.OperationalError("connection lost")
+        success(command, data)
+
+    def rows():
+        for i in range(3):
+            pulled.append(i)
+            yield ["a", i, i]
+
+    cur.copy_expert.side_effect = copy
+    with pg.Client(["localhost:4003"], batch_size=1) as client:
+        with pytest.raises(GreptimeError, match="after 1 acknowledged rows") as exc:
+            client.insert("recover", COLUMNS, rows())
+        assert exc.value.retriable is True
+        assert connect.call_count == 1
+        assert pulled == [0, 1]
+        assert len(payloads) == 1
+        assert client.insert("recover", COLUMNS, [["a", 10, 10]]) == 1
+        assert connect.call_count == 2
+        assert [row[2] for row in recovered_payloads] == ["10"]
+        # A new connection must also recheck the table, which may have been lost
+        # in a server restart. Neither the failed batch nor its tail is replayed.
+        healthy_cur.execute.assert_called_once()
+        assert "CREATE TABLE IF NOT EXISTS" in healthy_cur.execute.call_args.args[
+            0
+        ].as_string(None)
+    conn.close.assert_called_once()
+    healthy.close.assert_called_once()
+
+
+def test_health_check_reconnects_after_an_established_connection_breaks(database):
+    conn, cur, connect, _ = database
+    healthy = MagicMock(closed=0)
+    connect.side_effect = [conn, healthy]
+
+    def disconnect(*args):
+        conn.closed = 2
+        raise pg.psycopg2.OperationalError("connection lost")
+
+    with pg.Client(["localhost:4003"]) as client:
+        client.health_check()
+        cur.execute.side_effect = disconnect
+        with pytest.raises(GreptimeError) as exc:
+            client.health_check()
+        assert exc.value.retriable is True
+        assert connect.call_count == 1
+        client.health_check()
+        assert connect.call_count == 2
+    healthy.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
+        "SELECT 1"
+    )

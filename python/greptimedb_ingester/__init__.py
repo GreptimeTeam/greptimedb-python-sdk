@@ -5,7 +5,7 @@ from importlib.util import find_spec
 from ._errors import GreptimeError
 from ._types import Column, ColumnDataType, SemanticType
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = [
     "Client",
     "Column",

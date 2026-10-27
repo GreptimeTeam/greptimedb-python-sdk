@@ -279,7 +279,7 @@ class Client:
     def __init__(
         self,
         urls,
-        database="public",
+        database=None,
         username=None,
         password=None,
         *,
@@ -298,7 +298,9 @@ class Client:
             or batch_size <= 0
         ):
             raise _error("batch_size must be a positive integer")
-        if not isinstance(database, str) or not database or "\x00" in database:
+        if database is not None and (
+            not isinstance(database, str) or not database or "\x00" in database
+        ):
             raise _error("database must be a nonempty string without NUL")
         if (
             isinstance(connect_timeout_secs, bool)
@@ -318,6 +320,8 @@ class Client:
             self._params = parse_dsn(endpoint)
         except psycopg2.Error as exc:
             raise _error(str(exc)) from exc
+        if database is None:
+            database = self._params.get("dbname") or "public"
         self._params.update(dbname=database, connect_timeout=connect_timeout_secs)
         if username is not None:
             self._params["user"] = username
@@ -333,6 +337,11 @@ class Client:
     def _connection(self):
         if self._closed:
             raise _error("Client is closed")
+        if self._conn is not None and self._conn.closed:
+            # Reconnect only on a new call, never by replaying a failed batch.
+            self._conn.close()
+            self._conn = None
+            self._schemas.clear()
         if self._conn is None:
             self._conn = psycopg2.connect(**self._params)
             self._conn.autocommit = True

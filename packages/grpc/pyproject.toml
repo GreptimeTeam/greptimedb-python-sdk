@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "greptimedb-ingester-grpc"
-version = "0.1.1"
+version = "0.1.2"
 description = "Internal native backend for greptimedb-ingester[grpc]"
 readme = "README.md"
 requires-python = ">=3.10"
