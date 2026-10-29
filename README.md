@@ -35,7 +35,7 @@ print(affected)
 
 `insert` creates missing tables and writes COPY batches (default: 10,000 rows).
 Batches commit separately. The server must support `COPY FROM STDIN`.
-See the [API reference](docs/api.md#postgresql-copy-后端) for supported types and timestamp rules.
+See the [COPY example](examples/postgres_example.py).
 
 ## gRPC
 
@@ -47,8 +47,7 @@ client = Client(["127.0.0.1:4001"], database="public")
 ```
 
 Supports `insert`, `delete`, and `bulk_writer`. See [usage](docs/usage.md) and [examples](examples).
-With both backends installed, the root `Client` defaults to gRPC; use the explicit
-imports above to select a backend.
+Import `Client` from the backend you use. Import shared schema types from `greptimedb_ingester`.
 
 ## Development
 
@@ -58,4 +57,4 @@ uv run --extra postgres pytest
 ```
 
 For both backends, use `--all-extras` instead of `--extra postgres` (requires Rust 1.85+).
-See [testing and release](docs/testing.md) for integration tests and publishing.
+See the [CI workflow](.github/workflows/wheels.yml) for integration tests and publishing.

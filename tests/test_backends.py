@@ -34,19 +34,28 @@ def test_public_schema_is_available_without_a_backend():
     assert repr(column.semantic_type) == "SemanticType.TAG"
 
 
-def test_default_client_matches_installed_backend():
-    if util.find_spec("greptimedb_ingester_grpc") is not None:
-        from greptimedb_ingester.grpc import Client, Column, GreptimeError
+def test_root_has_no_backend_exports_or_legacy_native_module():
+    for name in ["Client", "WriteOptions", "BulkWriter", "Rows", "BulkResponse"]:
+        assert not hasattr(sdk, name)
+    assert util.find_spec("greptimedb_ingester._native") is None
 
-        assert sdk.Client is Client and sdk.Column is Column
-        assert sdk.GreptimeError is GreptimeError
-    elif util.find_spec("psycopg2") is not None:
-        from greptimedb_ingester.postgres import Client
 
-        assert sdk.Client is Client
-    else:
-        with pytest.raises(ImportError, match=r"\[grpc\].*\[postgres\]"):
-            sdk.Client(["localhost:4003"])
+def test_importing_public_schema_loads_no_backend():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+import greptimedb_ingester
+assert 'psycopg2' not in sys.modules
+assert 'greptimedb_ingester.postgres' not in sys.modules
+assert 'greptimedb_ingester.grpc' not in sys.modules
+assert 'greptimedb_ingester_grpc' not in sys.modules
+""",
+        ],
+        check=True,
+    )
 
 
 def test_postgres_errors_are_the_public_error_type():
@@ -79,7 +88,7 @@ def test_grpc_import_does_not_load_the_postgres_driver():
 import sys
 import greptimedb_ingester as sdk
 from greptimedb_ingester.grpc import Client
-assert sdk.Client is Client
+assert not hasattr(sdk, "Client")
 assert "psycopg2" not in sys.modules
 assert "greptimedb_ingester.postgres" not in sys.modules
 """

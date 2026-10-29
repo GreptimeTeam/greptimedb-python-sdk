@@ -7,7 +7,8 @@ Usage:
 import argparse
 import time
 
-from greptimedb_ingester import Client, Column, ColumnDataType, SemanticType, WriteOptions
+from greptimedb_ingester import Column, ColumnDataType, SemanticType
+from greptimedb_ingester.grpc import Client, WriteOptions
 
 COLUMNS = [
     Column("device_id", ColumnDataType.STRING, SemanticType.TAG),

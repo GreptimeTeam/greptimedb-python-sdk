@@ -19,7 +19,7 @@ Python write client for GreptimeDB. Package name `greptimedb-ingester`, import `
 ## Build and release
 
 - Root `uv build` builds the pure Python facade. Build the native dependency from `packages/grpc` with maturin. Keep facade/plugin versions, the exact grpc extra pin and lock files synchronized with `scripts/set-version.py`.
-- Test base, postgres-only, gRPC-only and combined installed wheels. Default root Client prefers installed gRPC, otherwise postgres; explicit `.grpc.Client` and `.postgres.Client` select a backend.
+- Test base, postgres-only, gRPC-only and combined installed wheels. The root exports only shared schema and GreptimeError. Import clients explicitly from `.grpc` or `.postgres`; do not add automatic backend selection or legacy import shims.
 - `v*` tags publish the native dependency first, then the public facade, using `PYPI_TOKEN` with access to both distributions. Both backend integrations must pass.
 
 - Wheels are built on the target OS: Linux x86_64, Linux aarch64, Windows x64, macOS Apple Silicon. Do not cross-compile those wheels.

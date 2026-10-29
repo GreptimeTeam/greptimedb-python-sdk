@@ -29,7 +29,7 @@ uv sync --python 3.10 --extra grpc
 ## 连接
 
 ```python
-from greptimedb_ingester import Client
+from greptimedb_ingester.grpc import Client
 
 client = Client(
     ["127.0.0.1:4001"],
@@ -57,7 +57,8 @@ client.health_check()
 ```python
 from datetime import datetime, timezone
 
-from greptimedb_ingester import Client, Column, ColumnDataType, SemanticType
+from greptimedb_ingester import Column, ColumnDataType, SemanticType
+from greptimedb_ingester.grpc import Client
 
 client = Client(["127.0.0.1:4001"], database="public")
 
@@ -111,7 +112,8 @@ client.delete(
 ```python
 from datetime import datetime, timezone
 
-from greptimedb_ingester import Client, Column, ColumnDataType, SemanticType, WriteOptions
+from greptimedb_ingester import Column, ColumnDataType, SemanticType
+from greptimedb_ingester.grpc import Client, WriteOptions
 
 client = Client(["127.0.0.1:4001"], database="public")
 columns = [
@@ -260,8 +262,7 @@ with Client(["127.0.0.1:4003"], batch_size=5000) as client:
     affected = client.insert("copy_data", columns, rows)
 ```
 
-只安装 `[postgres]` 时，也可直接导入顶层 `Client`。两种后端都安装时，
-顶层 `Client` 默认 gRPC，COPY 用显式导入；schema 和 `GreptimeError` 共用。
+两个后端分别从 `greptimedb_ingester.grpc`、`greptimedb_ingester.postgres` 导入 `Client`；公共 schema 和 `GreptimeError` 从顶层导入。
 COPY 只提供 insert、health_check、close 和 with；不提供 bulk_writer、delete 或 gRPC hints。
 支持类型、时间转换、逐批提交和失败行为见 [README](../README.zh-CN.md)
 和 [API](api.md#postgresql-copy-后端)。完整例子见 `examples/postgres_example.py`。

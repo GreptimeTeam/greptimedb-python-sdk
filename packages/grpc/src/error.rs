@@ -1,12 +1,4 @@
-use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-
-pyo3::create_exception!(
-    greptimedb_ingester,
-    GreptimeError,
-    PyException,
-    "Error returned by the GreptimeDB ingester."
-);
 
 #[derive(Debug)]
 pub struct RemoteError {
@@ -36,12 +28,14 @@ impl From<greptimedb_ingester::Error> for RemoteError {
 pub fn raise(message: impl Into<String>, retriable: bool) -> PyErr {
     let message = message.into();
     Python::with_gil(|py| {
-        let err = GreptimeError::new_err(message.clone());
-        let instance = err.value(py);
-        if instance.setattr("retriable", retriable).is_err() {
-            return GreptimeError::new_err(format!("retriable={retriable}: {message}"));
+        match py
+            .import("greptimedb_ingester._errors")
+            .and_then(|module| module.getattr("GreptimeError"))
+            .and_then(|class| class.call1((message, retriable)))
+        {
+            Ok(instance) => PyErr::from_value(instance),
+            Err(error) => error,
         }
-        err
     })
 }
 

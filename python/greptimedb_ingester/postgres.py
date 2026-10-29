@@ -5,9 +5,7 @@ import io
 import math
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from enum import Enum
 from functools import lru_cache
 from itertools import islice
 
@@ -20,40 +18,34 @@ except ModuleNotFoundError as exc:
 
 
 from ._errors import GreptimeError
+from ._types import Column, ColumnDataType as _DataType, SemanticType as _SemanticType
 
 
 def _error(message, retriable=False, *, acknowledged_rows=None):
-    error = GreptimeError(message)
-    error.retriable = retriable
+    error = GreptimeError(message, retriable=retriable)
     if acknowledged_rows is not None:
         error.acknowledged_rows = acknowledged_rows
     return error
 
 
-class _SemanticType(Enum):
-    TAG = "TAG"
-    FIELD = "FIELD"
-    TIMESTAMP = "TIMESTAMP"
-
-
-class _DataType(Enum):
-    BOOLEAN = "BOOLEAN"
-    INT8 = "TINYINT"
-    INT16 = "SMALLINT"
-    INT32 = "INT"
-    INT64 = "BIGINT"
-    UINT8 = "TINYINT UNSIGNED"
-    UINT16 = "SMALLINT UNSIGNED"
-    UINT32 = "INT UNSIGNED"
-    UINT64 = "BIGINT UNSIGNED"
-    FLOAT32 = "FLOAT"
-    FLOAT64 = "DOUBLE"
-    STRING = "STRING"
-    TIMESTAMP_SECOND = "TIMESTAMP(0)"
-    TIMESTAMP_MILLISECOND = "TIMESTAMP(3)"
-    TIMESTAMP_MICROSECOND = "TIMESTAMP(6)"
-    TIMESTAMP_NANOSECOND = "TIMESTAMP(9)"
-
+_SQL_TYPES = {
+    _DataType.BOOLEAN: "BOOLEAN",
+    _DataType.INT8: "TINYINT",
+    _DataType.INT16: "SMALLINT",
+    _DataType.INT32: "INT",
+    _DataType.INT64: "BIGINT",
+    _DataType.UINT8: "TINYINT UNSIGNED",
+    _DataType.UINT16: "SMALLINT UNSIGNED",
+    _DataType.UINT32: "INT UNSIGNED",
+    _DataType.UINT64: "BIGINT UNSIGNED",
+    _DataType.FLOAT32: "FLOAT",
+    _DataType.FLOAT64: "DOUBLE",
+    _DataType.STRING: "STRING",
+    _DataType.TIMESTAMP_SECOND: "TIMESTAMP(0)",
+    _DataType.TIMESTAMP_MILLISECOND: "TIMESTAMP(3)",
+    _DataType.TIMESTAMP_MICROSECOND: "TIMESTAMP(6)",
+    _DataType.TIMESTAMP_NANOSECOND: "TIMESTAMP(9)",
+}
 
 _UNITS = {
     _DataType.TIMESTAMP_SECOND: 0,
@@ -64,60 +56,29 @@ _UNITS = {
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
-@dataclass(frozen=True)
-class _Column:
-    name: str
-    data_type: _DataType
-    semantic_type: _SemanticType
-
-    def __post_init__(self):
-        if not isinstance(self.name, str) or not self.name or "\x00" in self.name:
-            raise ValueError("Column name must be a nonempty string without NUL")
-        if not isinstance(self.data_type, _DataType):
-            raise TypeError("Invalid column data type")
-        if not isinstance(self.semantic_type, _SemanticType):
-            raise TypeError("Invalid column semantic type")
-        if (
-            self.semantic_type == _SemanticType.TIMESTAMP
-            and self.data_type not in _UNITS
-        ):
-            raise ValueError("Time index must have a timestamp data type")
-        if (
-            self.semantic_type == _SemanticType.TAG
-            and self.data_type != _DataType.STRING
-        ):
-            raise ValueError("This client supports STRING tags")
-
-
-def _normalize_columns(columns):
-    result = []
-    for column in columns:
-        try:
-            name = repr(column.data_type).split(".")[-1]
-            column_name = column.name
-            semantic_name = repr(column.semantic_type).split(".")[-1]
-        except AttributeError as exc:
-            raise TypeError("columns must contain Column objects") from exc
-        try:
-            dtype = _DataType[name]
-        except KeyError:
-            raise ValueError(f"PostgreSQL COPY does not support {name}") from None
-        try:
-            semantic = _SemanticType[semantic_name]
-        except KeyError:
-            raise ValueError(f"Invalid column semantic type: {semantic_name}") from None
-        result.append(_Column(column_name, dtype, semantic))
-    return _columns(result)
-
-
 def _columns(columns):
     columns = tuple(columns)
-    if not columns or any(not isinstance(c, _Column) for c in columns):
+    if not columns or any(not isinstance(c, Column) for c in columns):
         raise ValueError("columns must contain Column objects")
     if len({c.name for c in columns}) != len(columns):
         raise ValueError("Duplicate column names")
     if sum(c.semantic_type == _SemanticType.TIMESTAMP for c in columns) != 1:
         raise ValueError("Exactly one time index is required")
+    for column in columns:
+        if column.data_type not in _SQL_TYPES:
+            raise ValueError(
+                f"PostgreSQL COPY does not support {column.data_type.name}"
+            )
+        if (
+            column.semantic_type == _SemanticType.TIMESTAMP
+            and column.data_type not in _UNITS
+        ):
+            raise ValueError("Time index must have a timestamp data type")
+        if (
+            column.semantic_type == _SemanticType.TAG
+            and column.data_type != _DataType.STRING
+        ):
+            raise ValueError("This client supports STRING tags")
     return columns
 
 
@@ -126,7 +87,7 @@ def _validate_schema(columns, description):
     for column in columns:
         found = actual.get(column.name)
         expected_type = column.data_type.name.replace("_", "")
-        expected_semantic = column.semantic_type.value
+        expected_semantic = column.semantic_type.name
         if found is None:
             raise _error(f"Table schema mismatch: missing column {column.name!r}")
         if found[0].upper() != expected_type or found[1] != expected_semantic:
@@ -387,7 +348,7 @@ class Client:
         neither validation nor transport failures are retried automatically.
         """
         try:
-            return self._insert(table, _normalize_columns(columns), rows)
+            return self._insert(table, _columns(columns), rows)
         except (ValueError, TypeError, OverflowError) as exc:
             raise _error(
                 f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
@@ -443,7 +404,8 @@ class Client:
                             self._schemas.pop(table, None)
                             definitions = [
                                 sql.SQL("{} {}").format(
-                                    sql.Identifier(c.name), sql.SQL(c.data_type.value)
+                                    sql.Identifier(c.name),
+                                    sql.SQL(_SQL_TYPES[c.data_type]),
                                 )
                                 for c in columns
                             ]

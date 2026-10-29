@@ -8,7 +8,7 @@ Requires GreptimeDB listening on 127.0.0.1:4001, HTTP SQL on 127.0.0.1:4000.
 
 from datetime import timedelta
 
-from greptimedb_ingester import Client
+from greptimedb_ingester.grpc import Client
 
 from ddl import drop_table
 from type_samples import INSERT_COLUMNS, INSERT_ROW, WHEN

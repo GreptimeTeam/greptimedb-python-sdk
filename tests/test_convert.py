@@ -5,15 +5,9 @@ import pytest
 
 pytest.importorskip("greptimedb_ingester_grpc")
 
-from greptimedb_ingester import (
-    Client,
-    Column,
-    ColumnDataType,
-    GreptimeError,
-    SemanticType,
-    WriteOptions,
-)
-from greptimedb_ingester._native import describe_row
+from greptimedb_ingester import Column, ColumnDataType, GreptimeError, SemanticType
+from greptimedb_ingester.grpc import Client, WriteOptions
+from greptimedb_ingester_grpc._native import describe_row
 from type_samples import ALL_COLUMNS, ALL_ROW, BULK_COLUMNS, BULK_ROW
 
 

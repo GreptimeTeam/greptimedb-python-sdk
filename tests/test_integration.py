@@ -15,7 +15,8 @@ import pytest
 
 pytest.importorskip("greptimedb_ingester_grpc")
 
-from greptimedb_ingester import Client, Column, ColumnDataType, GreptimeError, SemanticType, WriteOptions
+from greptimedb_ingester import Column, ColumnDataType, GreptimeError, SemanticType
+from greptimedb_ingester.grpc import Client, WriteOptions
 
 pytestmark = pytest.mark.integration
 
@@ -192,6 +193,8 @@ def test_bulk_write_20k(client):
         COLUMNS,
         options=WriteOptions(compression="lz4", parallelism=4),
     ) as writer:
+        assert writer.columns == COLUMNS
+        assert all(type(column) is Column for column in writer.columns)
         rows = writer.alloc_rows(BATCH)
         assert rows.add_rows(bulk_row(i) for i in range(1, BATCH + 1)) == BATCH
         response = writer.write(rows)
