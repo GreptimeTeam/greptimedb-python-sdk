@@ -363,13 +363,16 @@ def test_transport_failure_keeps_acknowledged_prefix_and_does_not_retry(database
     with pytest.raises(GreptimeError, match="after 2 acknowledged rows") as exc:
         pg.Client(["localhost:4003"], batch_size=2).insert("partial", COLUMNS, rows())
     assert exc.value.retriable is True
+    assert exc.value.acknowledged_rows == 2
     assert attempts == 2 and pulled == [0, 1, 2, 3]
 
 
 def test_validation_failure_in_later_batch_does_not_resend_prefix(database):
     client = pg.Client(["localhost:4003"], batch_size=1)
-    with pytest.raises(GreptimeError):
+    with pytest.raises(GreptimeError, match="after 1 acknowledged rows") as exc:
         client.insert("partial", COLUMNS, [["a", 1, 1], ["a", None, 2]])
+    assert exc.value.acknowledged_rows == 1
+    assert isinstance(exc.value.__cause__, ValueError)
     assert len(database[3]) == 1
 
 
@@ -523,9 +526,13 @@ def test_generator_error_keeps_completed_batches_and_client_is_reusable(
         raise failure
 
     with pg.Client(["localhost:4003"], batch_size=2) as client:
-        with pytest.raises(LookupError) as exc:
+        with pytest.raises(
+            GreptimeError, match=f"after {acknowledged} acknowledged rows"
+        ) as exc:
             client.insert("source_failure", COLUMNS, rows())
-        assert exc.value is failure
+        assert exc.value.__cause__ is failure
+        assert exc.value.acknowledged_rows == acknowledged
+        assert exc.value.retriable is False
         assert [int(row[2]) for _, batch in payloads for row in batch] == list(
             range(acknowledged)
         )
@@ -758,3 +765,67 @@ def test_changed_request_schema_is_revalidated_before_copy(database):
         assert len(payloads) == 1
         assert client.insert("existing", COLUMNS, [["b", 1, 2]]) == 1
         assert cur.fetchall.call_count == 3
+
+
+@pytest.mark.parametrize("row_kind", ["list", "dict"])
+@pytest.mark.parametrize("batch_size", [1, 2, 5])
+def test_generator_reusing_mutable_row_is_snapshotted_before_advance(
+    database, row_kind, batch_size
+):
+    _, _, _, payloads = database
+    shared = ["a", 0, 0] if row_kind == "list" else {"host": "a", "ts": 0, "value": 0}
+
+    def rows():
+        for i in range(7):
+            if row_kind == "list":
+                shared[1:] = [i, i]
+            else:
+                shared.update(ts=i, value=i)
+            yield shared
+
+    with pg.Client("localhost:4003", batch_size=batch_size) as client:
+        assert client.insert("reused", COLUMNS, rows()) == 7
+    actual = [row for _, batch in payloads for row in batch]
+    assert [int(row[2]) for row in actual] == list(range(7))
+    assert len({row[1] for row in actual}) == 7
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ValueError("bad value"),
+        TypeError("bad row"),
+        OverflowError("too large"),
+        LookupError("reader failed"),
+    ],
+)
+@pytest.mark.parametrize("yielded,acknowledged", [(1, 0), (3, 2), (4, 4)])
+def test_input_errors_report_only_fully_acknowledged_batches(
+    database, failure, yielded, acknowledged
+):
+    def rows():
+        for i in range(yielded):
+            yield ["a", i, i]
+        raise failure
+
+    with pg.Client("localhost:4003", batch_size=2) as client:
+        with pytest.raises(
+            GreptimeError, match=f"after {acknowledged} acknowledged rows"
+        ) as exc:
+            client.insert("input_error", COLUMNS, rows())
+        assert exc.value.acknowledged_rows == acknowledged
+        assert exc.value.__cause__ is failure
+        assert exc.value.retriable is False
+    assert sum(len(batch) for _, batch in database[3]) == acknowledged
+
+
+def test_invalid_iterator_reports_zero_acknowledged_rows(database):
+    class BrokenSource:
+        def __iter__(self):
+            raise LookupError("cannot start")
+
+    with pytest.raises(GreptimeError, match="after 0 acknowledged rows") as exc:
+        pg.Client("localhost:4003").insert("broken", COLUMNS, BrokenSource())
+    assert exc.value.acknowledged_rows == 0
+    assert isinstance(exc.value.__cause__, LookupError)
+    database[2].assert_not_called()

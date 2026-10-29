@@ -434,3 +434,56 @@ def test_integer_enums_round_trip(client, query, table, enum_type):
     assert records(
         query, sql.SQL("SELECT {} FROM {}").format(projection, sql.Identifier(table))
     ) == [(1,) * len(INTEGER_TYPES)]
+
+
+@pytest.mark.parametrize("row_kind", ["list", "dict"])
+@pytest.mark.parametrize("batch_size", [2, 5])
+def test_reused_generator_rows_are_stored_independently(
+    query, table, row_kind, batch_size
+):
+    columns = COLUMNS[:3]
+    shared = (
+        ["a", BASE_MS, 0]
+        if row_kind == "list"
+        else {"host": "a", "ts": BASE_MS, "seq": 0}
+    )
+
+    def rows():
+        for i in range(7):
+            if row_kind == "list":
+                shared[1:] = [BASE_MS + i, i]
+            else:
+                shared.update(ts=BASE_MS + i, seq=i)
+            yield shared
+
+    with Client(os.environ["GREPTIMEDB_POSTGRES"], batch_size=batch_size) as client:
+        assert client.insert(table, columns, rows()) == 7
+    assert records(
+        query, sql.SQL("SELECT seq FROM {} ORDER BY ts").format(sql.Identifier(table))
+    ) == [(i,) for i in range(7)]
+
+
+@pytest.mark.parametrize("source_error", [False, True])
+def test_late_input_failure_reports_persisted_prefix(query, table, source_error):
+    failure = LookupError("source unavailable")
+
+    def rows():
+        yield ["a", BASE_MS, 0]
+        yield ["a", BASE_MS + 1, 1]
+        yield ["a", BASE_MS + 2, 2]
+        if source_error:
+            raise failure
+        yield ["a", None, 3]
+
+    with Client(os.environ["GREPTIMEDB_POSTGRES"], batch_size=2) as client:
+        with pytest.raises(GreptimeError, match="after 2 acknowledged rows") as exc:
+            client.insert(table, COLUMNS[:3], rows())
+        assert exc.value.acknowledged_rows == 2
+        assert exc.value.retriable is False
+        if source_error:
+            assert exc.value.__cause__ is failure
+        assert records(
+            query,
+            sql.SQL("SELECT seq FROM {} ORDER BY ts").format(sql.Identifier(table)),
+        ) == [(0,), (1,)]
+        assert client.insert(table, COLUMNS[:3], [["a", BASE_MS + 3, 3]]) == 1

@@ -22,9 +22,11 @@ except ModuleNotFoundError as exc:
 from ._errors import GreptimeError
 
 
-def _error(message, retriable=False):
+def _error(message, retriable=False, *, acknowledged_rows=None):
     error = GreptimeError(message)
     error.retriable = retriable
+    if acknowledged_rows is not None:
+        error.acknowledged_rows = acknowledged_rows
     return error
 
 
@@ -387,7 +389,9 @@ class Client:
         try:
             return self._insert(table, _normalize_columns(columns), rows)
         except (ValueError, TypeError, OverflowError) as exc:
-            raise _error(str(exc)) from exc
+            raise _error(
+                f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
+            ) from exc
 
     def _insert(self, table, columns, rows):
         encode_row = _row_encoder(columns)
@@ -396,18 +400,33 @@ class Client:
             identifier, sql.SQL(", ").join(sql.Identifier(c.name) for c in columns)
         )
         copy_command = None
-        iterator = iter(rows)
+        try:
+            iterator = iter(rows)
+        except Exception as exc:
+            raise _error(
+                f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
+            ) from exc
         affected = 0
         with self._lock:
             if self._closed:
                 raise _error("Client is closed")
             while True:
-                batch = list(islice(iterator, self.batch_size))
+                try:
+                    # Snapshot each encoded row before advancing a source that
+                    # may reuse the same mutable list or dict for its next row.
+                    batch = [
+                        encode_row(row) for row in islice(iterator, self.batch_size)
+                    ]
+                except Exception as exc:
+                    raise _error(
+                        f"Input failed after {affected} acknowledged rows: {exc}",
+                        acknowledged_rows=affected,
+                    ) from exc
                 if not batch:
                     return affected
                 buffer = io.StringIO(newline="")
                 writer = csv.writer(buffer)
-                first_row = encode_row(batch[0])
+                first_row = batch[0]
                 # The CSV decoder strips a BOM at the start of each COPY stream.
                 # Quote that row so a leading U+FEFF remains part of the value.
                 if isinstance(first_row[0], str) and first_row[0].startswith("\ufeff"):
@@ -415,7 +434,7 @@ class Client:
                 else:
                     writer.writerow(first_row)
                 for row in islice(batch, 1, None):
-                    writer.writerow(encode_row(row))
+                    writer.writerow(row)
                 buffer.seek(0)
                 try:
                     conn = self._connection()
@@ -470,6 +489,7 @@ class Client:
                         isinstance(
                             exc, (psycopg2.OperationalError, psycopg2.InterfaceError)
                         ),
+                        acknowledged_rows=affected,
                     ) from exc
                 affected += len(batch)
 
