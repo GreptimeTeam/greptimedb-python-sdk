@@ -4,6 +4,7 @@ import os
 import socket
 import uuid
 from datetime import datetime, timedelta, timezone
+from enum import IntEnum, IntFlag
 
 import pytest
 
@@ -297,11 +298,16 @@ def test_later_validation_failure_leaves_acknowledged_prefix(query, table):
 
 
 def test_copy_server_error_is_reported_and_connection_recovers(client, query, table):
+    with query.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                "CREATE TABLE {} (host STRING, ts TIMESTAMP(3) TIME INDEX, reading BIGINT NOT NULL, PRIMARY KEY(host))"
+            ).format(sql.Identifier(table))
+        )
     columns = [COLUMNS[0], COLUMNS[1], Column("reading", D.INT64, S.FIELD)]
     assert client.insert(table, columns, [["a", BASE_MS, 1]]) == 1
-    wrong = columns[:2] + [Column("reading", D.STRING, S.FIELD)]
-    with pytest.raises(GreptimeError) as exc:
-        client.insert(table, wrong, [["b", BASE_MS + 1, "not-an-integer"]])
+    with pytest.raises(GreptimeError, match="COPY failed") as exc:
+        client.insert(table, columns, [["b", BASE_MS + 1, None]])
     assert exc.value.retriable is False
     assert count(query, table) == 1
     client.health_check()
@@ -338,3 +344,93 @@ def test_client_reconnects_after_socket_disconnection(client, query, table):
         query,
         sql.SQL("SELECT seq FROM {} ORDER BY seq").format(sql.Identifier(table)),
     ) == [(1,), (2,)]
+
+
+@pytest.mark.parametrize(
+    "definition, columns, rows",
+    [
+        (
+            "ts TIMESTAMP(3) TIME INDEX, host STRING, reading BIGINT",
+            [COLUMNS[0], COLUMNS[1], Column("reading", D.INT64, S.FIELD)],
+            [["a", BASE_MS, 1], ["b", BASE_MS, 2]],
+        ),
+        (
+            "ts TIMESTAMP(3) TIME INDEX, host STRING, PRIMARY KEY(host)",
+            [Column("host", D.STRING, S.FIELD), COLUMNS[1]],
+            [["a", BASE_MS]],
+        ),
+        (
+            "ts TIMESTAMP(3) TIME INDEX, reading BIGINT",
+            [
+                Column("ts", D.TIMESTAMP_NANOSECOND, S.TIMESTAMP),
+                Column("reading", D.INT64, S.FIELD),
+            ],
+            [[BASE_MS * 1000000 + 123456, 1]],
+        ),
+        (
+            "ts TIMESTAMP(3) TIME INDEX, reading BIGINT",
+            [COLUMNS[1], Column("reading", D.STRING, S.FIELD)],
+            [[BASE_MS, "00123"]],
+        ),
+        (
+            "ts TIMESTAMP(3) TIME INDEX",
+            [COLUMNS[1], Column("missing", D.INT64, S.FIELD)],
+            [[BASE_MS, 1]],
+        ),
+        (
+            "ts TIMESTAMP(3), actual_time TIMESTAMP(3) TIME INDEX",
+            [COLUMNS[1], Column("actual_time", D.TIMESTAMP_MILLISECOND, S.FIELD)],
+            [[BASE_MS, BASE_MS]],
+        ),
+    ],
+    ids=[
+        "field-as-tag",
+        "tag-as-field",
+        "timestamp-precision",
+        "string-as-int",
+        "missing-column",
+        "wrong-time-index",
+    ],
+)
+def test_existing_schema_mismatch_rejected_before_copy(
+    client, query, table, definition, columns, rows
+):
+    with query.cursor() as cur:
+        cur.execute(
+            sql.SQL("CREATE TABLE {} (" + definition + ")").format(
+                sql.Identifier(table)
+            )
+        )
+    with pytest.raises(GreptimeError, match="schema mismatch") as exc:
+        client.insert(table, columns, rows)
+    assert exc.value.retriable is False
+    assert count(query, table) == 0
+    assert table not in client._schemas
+    client.health_check()
+
+
+def test_changed_request_schema_does_not_reuse_cached_validation(client, query, table):
+    columns = [COLUMNS[0], COLUMNS[1], Column("reading", D.INT64, S.FIELD)]
+    assert client.insert(table, columns, [["a", BASE_MS, 1]]) == 1
+    wrong = columns[:2] + [Column("reading", D.STRING, S.FIELD)]
+    with pytest.raises(GreptimeError, match="schema mismatch"):
+        client.insert(table, wrong, [["b", BASE_MS + 1, "002"]])
+    assert count(query, table) == 1
+    assert client.insert(table, columns, [["b", BASE_MS + 1, 2]]) == 1
+    assert count(query, table) == 2
+
+
+@pytest.mark.parametrize("enum_type", [IntEnum, IntFlag])
+def test_integer_enums_round_trip(client, query, table, enum_type):
+    state = enum_type("State", {"OK": 1})
+    columns = [COLUMNS[1]] + [
+        Column(name.lower(), getattr(D, name), S.FIELD) for name, _, _ in INTEGER_TYPES
+    ]
+    assert (
+        client.insert(table, columns, [[BASE_MS] + [state.OK] * len(INTEGER_TYPES)])
+        == 1
+    )
+    projection = sql.SQL(", ").join(sql.Identifier(c.name) for c in columns[1:])
+    assert records(
+        query, sql.SQL("SELECT {} FROM {}").format(projection, sql.Identifier(table))
+    ) == [(1,) * len(INTEGER_TYPES)]

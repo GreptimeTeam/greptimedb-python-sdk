@@ -7,6 +7,7 @@ import subprocess
 import sys
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from enum import IntEnum, IntFlag
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,11 +28,19 @@ COLUMNS = [
 ]
 
 
+TABLE_SCHEMA = [
+    ("host", "String", "PRI", "YES", "", "TAG"),
+    ("ts", "TimestampNanosecond", "PRI", "NO", "", "TIMESTAMP"),
+    ("value", "Int64", "", "YES", "", "FIELD"),
+]
+
+
 @pytest.fixture
 def database(monkeypatch):
     connection = MagicMock(closed=0)
     cursor = connection.cursor.return_value.__enter__.return_value
     payloads = []
+    cursor.fetchall.return_value = list(TABLE_SCHEMA)
 
     def copy(command, data):
         rows = list(csv.reader(io.StringIO(data.read())))
@@ -122,9 +131,9 @@ def test_batches_dict_rows_csv_escaping_and_inputs_are_preserved(database):
     assert payloads[0][1][1] == ["b", "1969-12-31T23:59:59.999999999+00:00", ""]
     assert '"table""name"' in payloads[0][0]
     assert (
-        cur.execute.call_count == 1
-    )  # One create-if-absent, then existing-table writes.
-    assert "TIME INDEX" in cur.execute.call_args.args[0].as_string(None)
+        cur.execute.call_count == 2
+    )  # One create-and-validate, then cached existing-table writes.
+    assert "TIME INDEX" in cur.execute.call_args_list[0].args[0].as_string(None)
     assert rows == before
 
 
@@ -440,7 +449,7 @@ def test_batch_boundaries_preserve_row_order_and_acknowledged_count(
     assert [len(batch) for _, batch in payloads] == expected
     assert [int(row[2]) for _, batch in payloads for row in batch] == list(range(size))
     connect.assert_called_once()
-    assert cur.execute.call_count == 1
+    assert cur.execute.call_count == 2
 
 
 @pytest.mark.parametrize("table", [None, "", 42, "bad\x00name"])
@@ -486,7 +495,7 @@ def test_initial_connection_failure_is_not_retried_and_next_call_can_connect(
 def test_failed_table_creation_is_repeated_only_on_a_new_call(database):
     _, cur, connect, payloads = database
     failure = pg.psycopg2.ProgrammingError("create permission denied")
-    cur.execute.side_effect = [failure, None]
+    cur.execute.side_effect = [failure, None, None]
     with pg.Client(["localhost:4003"]) as client:
         with pytest.raises(GreptimeError, match="create permission denied") as exc:
             client.insert("create_failure", COLUMNS, [["a", 0, 1]])
@@ -496,7 +505,7 @@ def test_failed_table_creation_is_repeated_only_on_a_new_call(database):
         cur.copy_expert.assert_not_called()
         # A failed CREATE must not mark the table as already initialized.
         assert client.insert("create_failure", COLUMNS, [["a", 0, 1]]) == 1
-        assert cur.execute.call_count == 2
+        assert cur.execute.call_count == 3
         assert len(payloads) == 1
     connect.assert_called_once()
 
@@ -531,6 +540,10 @@ def test_generator_error_keeps_completed_batches_and_client_is_reusable(
 def test_different_tables_keep_their_own_schema_and_encoder(database):
     _, cur, connect, payloads = database
     text_columns = COLUMNS[:2] + [Column("value", D.STRING, S.FIELD)]
+    cur.fetchall.side_effect = [
+        TABLE_SCHEMA,
+        TABLE_SCHEMA[:2] + [("value", "String", "", "YES", "", "FIELD")],
+    ]
     with pg.Client(["localhost:4003"]) as client:
         assert client.insert("numbers", COLUMNS, [["a", 0, 1]]) == 1
         assert client.insert("strings", text_columns, [["a", 1, 'text,"value"']]) == 1
@@ -541,7 +554,10 @@ def test_different_tables_keep_their_own_schema_and_encoder(database):
         '"strings"',
         '"numbers"',
     ]
-    creates = [call.args[0].as_string(None) for call in cur.execute.call_args_list]
+    statements = [call.args[0].as_string(None) for call in cur.execute.call_args_list]
+    creates = [
+        statement for statement in statements if statement.startswith("CREATE TABLE")
+    ]
     assert len(creates) == 2
     assert '"numbers"' in creates[0] and '"value" BIGINT' in creates[0]
     assert '"strings"' in creates[1] and '"value" STRING' in creates[1]
@@ -587,6 +603,7 @@ def test_broken_copy_connection_reopens_on_next_call_without_resending(database)
     healthy = MagicMock(closed=0)
     healthy_cur = healthy.cursor.return_value.__enter__.return_value
     healthy_cur.rowcount = 1
+    healthy_cur.fetchall.return_value = TABLE_SCHEMA
     recovered_payloads = []
     healthy_cur.copy_expert.side_effect = lambda command, data: (
         recovered_payloads.extend(csv.reader(io.StringIO(data.read())))
@@ -619,10 +636,11 @@ def test_broken_copy_connection_reopens_on_next_call_without_resending(database)
         assert [row[2] for row in recovered_payloads] == ["10"]
         # A new connection must also recheck the table, which may have been lost
         # in a server restart. Neither the failed batch nor its tail is replayed.
-        healthy_cur.execute.assert_called_once()
-        assert "CREATE TABLE IF NOT EXISTS" in healthy_cur.execute.call_args.args[
+        assert healthy_cur.execute.call_count == 2
+        healthy_cur.fetchall.assert_called_once()
+        assert "CREATE TABLE IF NOT EXISTS" in healthy_cur.execute.call_args_list[
             0
-        ].as_string(None)
+        ].args[0].as_string(None)
     conn.close.assert_called_once()
     healthy.close.assert_called_once()
 
@@ -648,3 +666,95 @@ def test_health_check_reconnects_after_an_established_connection_breaks(database
     healthy.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
         "SELECT 1"
     )
+
+
+@pytest.mark.parametrize("enum_type", [IntEnum, IntFlag])
+@pytest.mark.parametrize(
+    "dtype", [D.INT8, D.INT16, D.INT32, D.INT64, D.UINT8, D.UINT16, D.UINT32, D.UINT64]
+)
+def test_integer_enum_encodes_as_builtin_int(dtype, enum_type):
+    state = enum_type("State", {"OK": 1})
+    columns = pg._normalize_columns([COLUMNS[1], Column("value", dtype, S.FIELD)])
+    encoded = pg._row_encoder(columns)([0, state.OK])
+    assert type(encoded[1]) is int
+    assert encoded[1] == 1
+    buffer = io.StringIO()
+    csv.writer(buffer).writerow(encoded)
+    assert list(csv.reader(io.StringIO(buffer.getvalue())))[0][1] == "1"
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        TABLE_SCHEMA[1:],
+        [("host", "String", "", "YES", "", "FIELD")] + TABLE_SCHEMA[1:],
+        [
+            TABLE_SCHEMA[0],
+            ("ts", "TimestampMillisecond", "PRI", "NO", "", "TIMESTAMP"),
+            TABLE_SCHEMA[2],
+        ],
+        [
+            TABLE_SCHEMA[0],
+            ("ts", "TimestampNanosecond", "", "YES", "", "FIELD"),
+            TABLE_SCHEMA[2],
+        ],
+        TABLE_SCHEMA[:2] + [("value", "String", "", "YES", "", "FIELD")],
+    ],
+    ids=["missing-column", "tag", "precision", "time-index", "data-type"],
+)
+def test_schema_mismatch_never_copies_or_caches_and_can_be_rechecked(
+    database, description
+):
+    _, cur, _, payloads = database
+    cur.fetchall.return_value = description
+    with pg.Client("localhost:4003") as client:
+        for _ in range(2):
+            with pytest.raises(GreptimeError, match="schema mismatch") as exc:
+                client.insert("existing", COLUMNS, [["a", 0, 1]])
+            assert exc.value.retriable is False
+            assert "existing" not in client._schemas
+        assert cur.fetchall.call_count == 2
+        cur.copy_expert.assert_not_called()
+        assert payloads == []
+        cur.fetchall.return_value = TABLE_SCHEMA
+        assert client.insert("existing", COLUMNS, [["a", 0, 1]]) == 1
+        assert cur.fetchall.call_count == 3
+        assert len(payloads) == 1
+
+
+def test_schema_validation_matches_by_name_and_allows_extra_columns(database):
+    _, cur, _, _ = database
+    cur.fetchall.return_value = list(reversed(TABLE_SCHEMA)) + [
+        ("extra", "String", "", "YES", "", "FIELD")
+    ]
+    with pg.Client("localhost:4003", batch_size=1) as client:
+        assert client.insert("existing", COLUMNS, [["a", 0, 1], ["b", 1, 2]]) == 2
+        assert client.insert("existing", COLUMNS, [["c", 2, 3]]) == 1
+    # Metadata is checked only once for an unchanged schema and connection.
+    cur.fetchall.assert_called_once()
+
+
+def test_schema_query_failure_does_not_cache_and_next_call_rechecks(database):
+    _, cur, _, _ = database
+    failure = pg.psycopg2.ProgrammingError("metadata unavailable")
+    cur.fetchall.side_effect = [failure, TABLE_SCHEMA]
+    with pg.Client("localhost:4003") as client:
+        with pytest.raises(GreptimeError, match="metadata unavailable"):
+            client.insert("existing", COLUMNS, [["a", 0, 1]])
+        assert "existing" not in client._schemas
+        cur.copy_expert.assert_not_called()
+        assert client.insert("existing", COLUMNS, [["a", 0, 1]]) == 1
+    assert cur.fetchall.call_count == 2
+
+
+def test_changed_request_schema_is_revalidated_before_copy(database):
+    _, cur, _, payloads = database
+    with pg.Client("localhost:4003") as client:
+        assert client.insert("existing", COLUMNS, [["a", 0, 1]]) == 1
+        wrong = COLUMNS[:2] + [Column("value", D.STRING, S.FIELD)]
+        with pytest.raises(GreptimeError, match="schema mismatch"):
+            client.insert("existing", wrong, [["b", 1, "002"]])
+        assert "existing" not in client._schemas
+        assert len(payloads) == 1
+        assert client.insert("existing", COLUMNS, [["b", 1, 2]]) == 1
+        assert cur.fetchall.call_count == 3

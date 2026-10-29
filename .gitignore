@@ -18,5 +18,4 @@ test/
 
 /packages/grpc/target/
 .DS_Store
-/docs/getting-started.md
-/docs/getting-started.pdf
+/docs

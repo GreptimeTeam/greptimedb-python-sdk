@@ -119,6 +119,22 @@ def _columns(columns):
     return columns
 
 
+def _validate_schema(columns, description):
+    actual = {row[0]: (row[1], row[5]) for row in description}
+    for column in columns:
+        found = actual.get(column.name)
+        expected_type = column.data_type.name.replace("_", "")
+        expected_semantic = column.semantic_type.value
+        if found is None:
+            raise _error(f"Table schema mismatch: missing column {column.name!r}")
+        if found[0].upper() != expected_type or found[1] != expected_semantic:
+            raise _error(
+                f"Table schema mismatch for column {column.name!r}: "
+                f"expected {column.data_type.name} {expected_semantic}, "
+                f"found {found[0]} {found[1]}"
+            )
+
+
 def _table(table):
     if not isinstance(table, str) or not table or "\x00" in table:
         raise ValueError("table must be a nonempty string without NUL")
@@ -227,7 +243,8 @@ def _column_encoder(column):
                 raise TypeError(f"{column.name}: expected int")
             if not lower <= value < upper:
                 raise ValueError(f"{column.name}: integer outside {name} range")
-            return value
+            # Python 3.10 IntEnum/IntFlag stringify as names, not CSV numbers.
+            return value if type(value) is int else int(value)
 
         return encode
     if dtype in (_DataType.FLOAT32, _DataType.FLOAT64):
@@ -404,6 +421,7 @@ class Client:
                     conn = self._connection()
                     with conn.cursor() as cur:
                         if self._schemas.get(table) != columns:
+                            self._schemas.pop(table, None)
                             definitions = [
                                 sql.SQL("{} {}").format(
                                     sql.Identifier(c.name), sql.SQL(c.data_type.value)
@@ -436,6 +454,8 @@ class Client:
                                     identifier, sql.SQL(", ").join(definitions)
                                 )
                             )
+                            cur.execute(sql.SQL("DESC TABLE {}").format(identifier))
+                            _validate_schema(columns, cur.fetchall())
                             self._schemas[table] = columns
                         if copy_command is None:
                             copy_command = command.as_string(conn)
