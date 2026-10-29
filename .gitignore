@@ -15,3 +15,7 @@ build/
 *.pyd
 .maturin/
 test/
+
+/packages/grpc/target/
+.DS_Store
+/docs

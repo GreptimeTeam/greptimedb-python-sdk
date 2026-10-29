@@ -1,0 +1,8 @@
+include .python-version
+include README.zh-CN.md
+prune docs
+include docs/api.md docs/usage.md docs/testing.md
+recursive-include examples *.py
+recursive-include tests *.py
+prune packages
+prune target

@@ -1,6 +1,6 @@
 # Agent notes
 
-Python write client for GreptimeDB. Package name `greptimedb-ingester`, import `greptimedb_ingester`. Binds `greptimedb-ingester` 0.19.0. Python 3.10+, sync API, PyO3 `abi3-py310`, maturin, uv.
+Python write client for GreptimeDB. Package name `greptimedb-ingester`, import `greptimedb_ingester`. Python 3.10+, sync API, uv. Root is a pure Python setuptools facade with optional `[grpc]` and `[postgres]` extras. The native plugin `greptimedb-ingester-grpc` in `packages/grpc` binds `greptimedb-ingester` 0.19.0 using PyO3 `abi3-py310` and maturin. Rust sources and Cargo files live there, not at the root. Postgres-only installations must not depend on the native plugin.
 
 ## Write paths
 
@@ -17,6 +17,10 @@ Python write client for GreptimeDB. Package name `greptimedb-ingester`, import `
 - In prose for this repo, keep API names as written: `insert`, `bulk`, `GreptimeDB`, `wheel`, `gRPC`. Do not invent shorthand for them.
 
 ## Build and release
+
+- Root `uv build` builds the pure Python facade. Build the native dependency from `packages/grpc` with maturin. Keep facade/plugin versions, the exact grpc extra pin and lock files synchronized with `scripts/set-version.py`.
+- Test base, postgres-only, gRPC-only and combined installed wheels. Default root Client prefers installed gRPC, otherwise postgres; explicit `.grpc.Client` and `.postgres.Client` select a backend.
+- `v*` tags publish the native dependency first, then the public facade, using `PYPI_TOKEN` with access to both distributions. Both backend integrations must pass.
 
 - Wheels are built on the target OS: Linux x86_64, Linux aarch64, Windows x64, macOS Apple Silicon. Do not cross-compile those wheels.
 - After a wheel build, install it and run `pytest`. Tests must not require a running GreptimeDB.

@@ -10,126 +10,246 @@ on:
 permissions:
   contents: read
 
+env:
+  GREPTIMEDB_IMAGE: greptime/greptimedb-nightly@sha256:bcd83379d1d2475859eb3db2b4690573c949027802a2419d0fc42597d97b9969
+
 jobs:
+  facade:
+    name: Pure Python facade / no backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.17"
+          python-version: "3.10"
+      - run: uv sync --locked
+      - name: Base installation tests
+        run: uv run --locked pytest
+      - name: Build facade wheel and source archive
+        run: uv build
+      - name: Test installed base wheel
+        run: |
+          wheel=$(find "$PWD/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          uv run --no-cache --isolated --no-project --python 3.10 --with "$wheel" --with pytest python -m pytest -m 'not integration' -o addopts= -v
+          uv run --no-cache --isolated --no-project --python 3.10 --with "$wheel" python -c "from importlib.util import find_spec; import greptimedb_ingester; assert find_spec('psycopg2') is None; assert find_spec('greptimedb_ingester_grpc') is None"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: facade-distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
   build:
-    name: ${{ matrix.platform.name }}
+    name: gRPC and combined / ${{ matrix.platform.name }}
+    needs: facade
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
         platform:
-          - name: linux-x86_64
-            os: ubuntu-latest
-            target: x86_64
-            manylinux: "2_28"
-          - name: linux-aarch64
-            os: ubuntu-24.04-arm
-            target: aarch64
-            manylinux: "2_28"
-          - name: windows-x64
-            os: windows-latest
-            target: x64
-            manylinux: "off"
-          - name: macos-arm64
-            os: macos-latest
-            target: aarch64
-            manylinux: "off"
+          - { name: linux-x86_64, os: ubuntu-latest, target: x86_64, manylinux: "2_28" }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, target: aarch64, manylinux: "2_28" }
+          - { name: windows-x64, os: windows-latest, target: x64, manylinux: "off" }
+          - { name: macos-arm64, os: macos-latest, target: aarch64, manylinux: "off" }
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build wheel
+      - uses: actions/download-artifact@v4
+        with:
+          name: facade-distributions
+          path: dist/core
+      # Create the output directory as the runner before the root-owned manylinux build.
+      - name: Build native source archive
+        if: matrix.platform.name == 'linux-x86_64'
+        uses: PyO3/maturin-action@v1
+        env:
+          RUSTC_WRAPPER: ""
+        with:
+          working-directory: packages/grpc
+          command: sdist
+          args: --out ../../dist/grpc
+      - name: Build native plugin on its target platform
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: packages/grpc
           target: ${{ matrix.platform.target }}
           manylinux: ${{ matrix.platform.manylinux }}
-          args: --release --locked --out dist --compatibility pypi
+          args: --release --locked --out ../../dist/grpc --compatibility pypi
           sccache: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-
-      - name: Smoke test
+      - name: Install gRPC-only wheels
         run: |
-          python -m pip install --no-index --find-links dist greptimedb-ingester
-          python -m pip install pytest
-          python -m pytest -o addopts=
-
+          python -c "import glob,subprocess,sys; subprocess.check_call([sys.executable,'-m','pip','install',glob.glob('dist/core/*.whl')[0],glob.glob('dist/grpc/*.whl')[0],'pytest'])"
+      - name: Test gRPC-only installation
+        run: |
+          python -c "from importlib.util import find_spec; assert find_spec('psycopg2') is None"
+          python -m pytest -m "not integration" -o addopts= -v
+      - name: Add postgres extra and test both backends
+        run: |
+          python -c "import glob,subprocess,sys; subprocess.check_call([sys.executable,'-m','pip','install',glob.glob('dist/core/*.whl')[0]+'[postgres]'])"
+          python -m pytest -m "not integration" -o addopts= -v
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.platform.name }}
-          path: dist/*.whl
+          name: grpc-wheels-${{ matrix.platform.name }}
+          path: dist/grpc/*
+          if-no-files-found: error
+
+  postgres:
+    name: Postgres-only / ${{ matrix.os }}
+    needs: facade
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: facade-distributions
+          path: dist/core
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.10"
+          enable-cache: false
+      - name: Test installed postgres extra without Rust SDK
+        run: |
+          wheel=$(python -c "from pathlib import Path; print(next(Path('dist/core').glob('*.whl')).resolve(), end='')")
+          uv run --no-cache --isolated --no-project --python 3.10 --with "${wheel}[postgres]" --with pytest python -m pytest -m 'not integration' -o addopts= -v
+          uv run --no-cache --isolated --no-project --python 3.10 --with "${wheel}[postgres]" python -c "from importlib.util import find_spec; import greptimedb_ingester; assert find_spec('greptimedb_ingester_grpc') is None"
 
   integration:
-    name: integration
+    name: gRPC integration / installed wheels
+    needs: [facade, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.10"
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: facade-distributions
+          path: dist/core
+      - uses: actions/download-artifact@v4
+        with:
+          name: grpc-wheels-linux-x86_64
+          path: dist/grpc
       - name: Start GreptimeDB
         run: |
-          docker run -d --name greptimedb -p 4000:4000 -p 4001:4001 \
-            greptime/greptimedb:latest \
-            standalone start --http-addr 0.0.0.0:4000 --rpc-bind-addr 0.0.0.0:4001
-          for _ in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:4000/health; then
-              exit 0
-            fi
+          docker run -d --name greptimedb -p 4000:4000 -p 4001:4001 "$GREPTIMEDB_IMAGE" standalone start --http-addr 0.0.0.0:4000 --grpc-bind-addr 0.0.0.0:4001
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:4000/health; then exit 0; fi
             sleep 2
           done
           docker logs greptimedb
           exit 1
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: astral-sh/setup-uv@v5
-
-      - name: Integration tests
+      - name: Existing gRPC integration tests
         env:
           GREPTIMEDB_GRPC: 127.0.0.1:4001
           GREPTIMEDB_HTTP: http://127.0.0.1:4000
         run: |
-          uv python pin 3.10
-          uv sync --group dev
-          uv run maturin develop
-          uv run pytest -m integration -o addopts=
+          core=$(find "$PWD/dist/core" -name '*.whl' -print -quit)
+          native=$(find "$PWD/dist/grpc" -name '*.whl' -print -quit)
+          uv run --no-cache --isolated --no-project --python 3.10 --with "$core" --with "$native" --with pytest python -m pytest tests/test_integration.py -m integration -o addopts= -v
+      - if: failure()
+        run: docker logs greptimedb
+      - if: always()
+        run: docker rm -f greptimedb
+
+  postgres-integration:
+    name: COPY integration / postgres extra
+    needs: [facade, postgres]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.10"
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: facade-distributions
+          path: dist/core
+      - name: Start COPY-capable GreptimeDB
+        run: |
+          docker run -d --name greptimedb-copy -p 4000:4000 -p 4003:4003 "$GREPTIMEDB_IMAGE" standalone start --http-addr 0.0.0.0:4000 --postgres-addr 0.0.0.0:4003
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:4000/health; then exit 0; fi
+            sleep 2
+          done
+          docker logs greptimedb-copy
+          exit 1
+      - name: COPY integration tests
+        env:
+          GREPTIMEDB_POSTGRES: 127.0.0.1:4003
+        run: |
+          core=$(find "$PWD/dist/core" -name '*.whl' -print -quit)
+          uv run --no-cache --isolated --no-project --python 3.10 --with "${core}[postgres]" --with pytest python -m pytest tests/test_postgres_integration.py -m integration -o addopts= -v
+      - if: failure()
+        run: docker logs greptimedb-copy
+      - if: always()
+        run: docker rm -f greptimedb-copy
+
+  pypi:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [facade, build, postgres, integration, postgres-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: facade-distributions
+          path: dist/core
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grpc-wheels-*
+          merge-multiple: true
+          path: dist/grpc
+      - name: Publish optional native dependency first
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist/grpc/
+          attestations: false
+          skip-existing: true
+      - name: Publish public facade with extras
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist/core/
+          attestations: false
+          skip-existing: true
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [facade, build, postgres, integration, postgres-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
+          name: facade-distributions
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grpc-wheels-*
           merge-multiple: true
           path: dist
-
-      - name: Attach wheels to the GitHub release
+      - name: Attach tested distributions to release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.whl --clobber
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
-            gh release create "$tag" dist/*.whl --title "$tag" --generate-notes
+            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
           fi
-
-  pypi:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-*
-          merge-multiple: true
-          path: dist
-
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_TOKEN }}

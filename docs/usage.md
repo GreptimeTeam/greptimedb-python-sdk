@@ -2,7 +2,7 @@
 
 GreptimeDB 的 Python 写入客户端。支持 Python 3.10 及以上。调用是同步的。
 
-两条写入路径：
+gRPC 后端的两条写入路径（COPY 见文末）：
 
 - `Client.insert`：gRPC 行写入。服务端可以按请求里的 schema 自动建表。
 - `Client.bulk_writer`：Arrow Flight 批量写入。不会建表，表必须已经存在。
@@ -11,25 +11,19 @@ gRPC 端口默认是 `127.0.0.1:4001`，不是 HTTP 的 `4000`。接口说明见
 
 ## 安装
 
-按自己的系统安装对应的 wheel。同一个操作系统和 CPU 上的 Python 3.10 及以上共用一个 wheel。
+用 extra 选择后端：`[grpc]`、`[postgres]` 或 `[grpc,postgres]`。
+不带 extra 的主包只含 schema 定义。这里先演示 gRPC；COPY 不需要 Rust。
+
+安装器会下载和当前操作系统、CPU 匹配的 wheel。同一个操作系统和 CPU 上的 Python 3.10 及以上共用一个 wheel。
 
 ```bash
-pip install greptimedb_ingester-0.1.0-cp310-abi3-manylinux_2_28_x86_64.whl
-```
-
-装完之后：
-
-```python
-import greptimedb_ingester
-print(greptimedb_ingester.__version__)
+pip install "greptimedb-ingester[grpc]"
 ```
 
 从源码装时，机器上要有 Rust 1.85+：
 
 ```bash
-pip install maturin
-maturin build --release
-pip install dist/greptimedb_ingester-*.whl
+uv sync --python 3.10 --extra grpc
 ```
 
 ## 连接
@@ -235,7 +229,39 @@ except GreptimeError as err:
 - `examples/bench_write.py`：对本机 GreptimeDB 测写入速度
 
 ```bash
-uv run python examples/insert_example.py
-uv run python examples/bulk_example.py
-uv run python examples/bench_write.py --seconds 8
+uv run --extra grpc python examples/insert_example.py
+uv run --extra grpc python examples/bulk_example.py
+uv run --extra grpc python examples/bench_write.py --seconds 8
 ```
+
+
+## PostgreSQL COPY 可选后端
+
+同一个主包通过 extra 选择依赖；只装 `[postgres]` 不会安装 Rust SDK。
+上面的连接、转换和 bulk 示例针对 `[grpc]` 后端，COPY 的规则如下。
+
+```bash
+uv add "greptimedb-ingester[postgres]"
+# 或 pip install "greptimedb-ingester[postgres]"
+```
+
+```python
+from greptimedb_ingester import Column, ColumnDataType, SemanticType
+from greptimedb_ingester.postgres import Client
+
+columns = [
+    Column("host", ColumnDataType.STRING, SemanticType.TAG),
+    Column("ts", ColumnDataType.TIMESTAMP_MILLISECOND, SemanticType.TIMESTAMP),
+    Column("reading", ColumnDataType.FLOAT64, SemanticType.FIELD),
+]
+rows = (("edge", 1793066400000 + i, i / 10) for i in range(20003))
+with Client(["127.0.0.1:4003"], batch_size=5000) as client:
+    client.health_check()
+    affected = client.insert("copy_data", columns, rows)
+```
+
+只安装 `[postgres]` 时，也可直接导入顶层 `Client`。两种后端都安装时，
+顶层 `Client` 默认 gRPC，COPY 用显式导入；schema 和 `GreptimeError` 共用。
+COPY 只提供 insert、health_check、close 和 with；不提供 bulk_writer、delete 或 gRPC hints。
+支持类型、时间转换、逐批提交和失败行为见 [README](../README.zh-CN.md)
+和 [API](api.md#postgresql-copy-后端)。完整例子见 `examples/postgres_example.py`。

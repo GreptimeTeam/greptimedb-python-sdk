@@ -1,40 +1,39 @@
 [build-system]
-requires = ["maturin>=1.8,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "greptimedb-ingester"
-version = "0.1.1"
-description = "Python bindings for the GreptimeDB Rust ingester"
+version = "0.1.2"
+description = "GreptimeDB Python client with optional gRPC and PostgreSQL COPY backends"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-keywords = ["greptimedb", "database", "ingest", "grpc"]
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Rust",
-]
+license-files = ["LICENSE"]
+keywords = ["greptimedb", "database", "ingest", "grpc", "postgres"]
 
 [project.urls]
-Repository = "https://github.com/GreptimeTeam/greptimedb-ingester-rust"
+Repository = "https://github.com/GreptimeTeam/greptimedb-python-sdk"
+
+[project.optional-dependencies]
+grpc = ["greptimedb-ingester-grpc==0.1.2"]
+postgres = ["psycopg2-binary>=2.9.10,<3"]
 
 [dependency-groups]
-dev = [
-    "maturin>=1.8,<2.0",
-    "pytest>=8.0",
-]
+dev = ["pytest>=8.0"]
 
-[tool.maturin]
-python-source = "python"
-module-name = "greptimedb_ingester._native"
-features = ["pyo3/extension-module"]
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["greptimedb_ingester*"]
+
+[tool.setuptools.package-data]
+greptimedb_ingester = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["examples"]
 addopts = "-m 'not integration'"
-markers = ["integration: write tests that need GREPTIMEDB_GRPC"]
+markers = ["integration: writes requiring GREPTIMEDB_GRPC or GREPTIMEDB_POSTGRES"]
 
-[tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }, { file = "src/**/*.rs" }]
+[tool.uv.sources]
+greptimedb-ingester-grpc = { path = "packages/grpc", editable = true }
