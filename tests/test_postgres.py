@@ -829,3 +829,43 @@ def test_invalid_iterator_reports_zero_acknowledged_rows(database):
     assert exc.value.acknowledged_rows == 0
     assert isinstance(exc.value.__cause__, LookupError)
     database[2].assert_not_called()
+
+
+@pytest.mark.parametrize("failed_batch", [1, 2])
+@pytest.mark.parametrize("reported_rows", [-1, 0, 1, 3])
+def test_ack_count_mismatch_reports_prefix_and_uncertain_batch(
+    database, failed_batch, reported_rows
+):
+    _, cur, _, _ = database
+    successful_copy = cur.copy_expert.side_effect
+    attempts = 0
+    consumed = []
+
+    def copy(command, data):
+        nonlocal attempts
+        attempts += 1
+        successful_copy(command, data)
+        if attempts == failed_batch:
+            cur.rowcount = reported_rows
+
+    def rows():
+        for i in range(6):
+            consumed.append(i)
+            yield ["a", i, i]
+
+    cur.copy_expert.side_effect = copy
+    acknowledged = (failed_batch - 1) * 2
+    with pg.Client("localhost:4003", batch_size=2) as client:
+        with pytest.raises(GreptimeError) as exc:
+            client.insert("ack_mismatch", COLUMNS, rows())
+        assert exc.value.acknowledged_rows == acknowledged
+        assert f"after {acknowledged} acknowledged rows" in str(exc.value)
+        assert f"Expected 2 acknowledged rows, received {reported_rows}" in str(
+            exc.value
+        )
+        assert "current batch outcome is uncertain" in str(exc.value)
+        assert exc.value.retriable is False
+        assert attempts == failed_batch
+        assert consumed == list(range(failed_batch * 2))
+        cur.copy_expert.side_effect = successful_copy
+        assert client.insert("ack_mismatch", COLUMNS, [["a", 10, 10]]) == 1

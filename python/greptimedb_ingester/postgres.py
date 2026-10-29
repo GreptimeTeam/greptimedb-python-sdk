@@ -481,7 +481,10 @@ class Client:
                         cur.copy_expert(copy_command, buffer)
                         if cur.rowcount != len(batch):
                             raise _error(
-                                f"Expected {len(batch)} acknowledged rows, received {cur.rowcount}"
+                                f"COPY row-count mismatch after {affected} acknowledged rows; "
+                                f"current batch outcome is uncertain: "
+                                f"Expected {len(batch)} acknowledged rows, received {cur.rowcount}",
+                                acknowledged_rows=affected,
                             )
                 except psycopg2.Error as exc:
                     raise _error(
