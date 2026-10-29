@@ -135,8 +135,11 @@ impl BulkWriter {
     }
 
     #[getter]
-    fn columns(&self) -> Vec<Column> {
-        self.columns.clone()
+    fn columns(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        self.columns
+            .iter()
+            .map(|column| column.to_python(py))
+            .collect()
     }
 
     fn alloc_rows(&self, py: Python<'_>, capacity: usize) -> PyResult<Py<Rows>> {

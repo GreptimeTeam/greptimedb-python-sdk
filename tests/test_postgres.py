@@ -274,7 +274,7 @@ def test_all_declared_types_have_an_explicit_supported_or_rejected_case():
             "FLOAT64": 1.25,
         }.get(name, 1)
         cols = [COLUMNS[1], Column("field", getattr(D, name), S.FIELD)]
-        normalized = pg._normalize_columns(cols)
+        normalized = pg._columns(cols)
         assert pg._row_encoder(normalized)([0, value])[-1] is not None
         assert pg._row_encoder(normalized)([0, None])[-1] is None
 
@@ -291,7 +291,7 @@ def test_every_integer_width_checks_bounds(name, bits, unsigned):
     low, high = (
         (0, 2**bits - 1) if unsigned else (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1)
     )
-    cols = pg._normalize_columns(
+    cols = pg._columns(
         COLUMNS[:2] + [Column("value", getattr(D, name), S.FIELD)]
     )
     encode = pg._row_encoder(cols)
@@ -305,7 +305,7 @@ def test_every_integer_width_checks_bounds(name, bits, unsigned):
 @pytest.mark.parametrize("dtype", [D.FLOAT32, D.FLOAT64])
 def test_float_validation(dtype):
     encode = pg._row_encoder(
-        pg._normalize_columns([COLUMNS[1], Column("f", dtype, S.FIELD)])
+        pg._columns([COLUMNS[1], Column("f", dtype, S.FIELD)])
     )
     for value in [float("inf"), float("nan"), True, "1"]:
         with pytest.raises((TypeError, ValueError)):
@@ -417,10 +417,6 @@ def test_context_exit_closes_and_preserves_user_exception(database):
 
 
 def test_postgres_only_import_has_no_native_dependency():
-    import importlib.util
-
-    if importlib.util.find_spec("greptimedb_ingester_grpc") is not None:
-        pytest.skip("No-native assertion is exercised by postgres-only CI")
     code = """
 import sys
 import greptimedb_ingester
@@ -681,7 +677,7 @@ def test_health_check_reconnects_after_an_established_connection_breaks(database
 )
 def test_integer_enum_encodes_as_builtin_int(dtype, enum_type):
     state = enum_type("State", {"OK": 1})
-    columns = pg._normalize_columns([COLUMNS[1], Column("value", dtype, S.FIELD)])
+    columns = pg._columns([COLUMNS[1], Column("value", dtype, S.FIELD)])
     encoded = pg._row_encoder(columns)([0, state.OK])
     assert type(encoded[1]) is int
     assert encoded[1] == 1

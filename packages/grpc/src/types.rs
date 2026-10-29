@@ -6,111 +6,39 @@ use crate::error::raise;
 use greptimedb_ingester::api::v1::ColumnDataType as ProtoType;
 use greptimedb_ingester::{CompressionType, GrpcCompression};
 
-#[pyclass(eq, eq_int, frozen, name = "SemanticType")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SemanticType {
-    #[pyo3(name = "TAG")]
     Tag = 0,
-    #[pyo3(name = "FIELD")]
     Field = 1,
-    #[pyo3(name = "TIMESTAMP")]
     Timestamp = 2,
 }
 
-#[pymethods]
-impl SemanticType {
-    fn __repr__(&self) -> String {
-        format!("SemanticType.{self:?}")
-            .replace("Tag", "TAG")
-            .replace("Field", "FIELD")
-            .replace("Timestamp", "TIMESTAMP")
-    }
-}
-
-#[pyclass(eq, eq_int, frozen, name = "ColumnDataType")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColumnDataType {
-    #[pyo3(name = "BOOLEAN")]
     Boolean = 0,
-    #[pyo3(name = "INT8")]
     Int8 = 1,
-    #[pyo3(name = "INT16")]
     Int16 = 2,
-    #[pyo3(name = "INT32")]
     Int32 = 3,
-    #[pyo3(name = "INT64")]
     Int64 = 4,
-    #[pyo3(name = "UINT8")]
     Uint8 = 5,
-    #[pyo3(name = "UINT16")]
     Uint16 = 6,
-    #[pyo3(name = "UINT32")]
     Uint32 = 7,
-    #[pyo3(name = "UINT64")]
     Uint64 = 8,
-    #[pyo3(name = "FLOAT32")]
     Float32 = 9,
-    #[pyo3(name = "FLOAT64")]
     Float64 = 10,
-    #[pyo3(name = "BINARY")]
     Binary = 11,
-    #[pyo3(name = "STRING")]
     String = 12,
-    #[pyo3(name = "DATE")]
     Date = 13,
-    #[pyo3(name = "TIMESTAMP_SECOND")]
     TimestampSecond = 15,
-    #[pyo3(name = "TIMESTAMP_MILLISECOND")]
     TimestampMillisecond = 16,
-    #[pyo3(name = "TIMESTAMP_MICROSECOND")]
     TimestampMicrosecond = 17,
-    #[pyo3(name = "TIMESTAMP_NANOSECOND")]
     TimestampNanosecond = 18,
-    #[pyo3(name = "TIME_SECOND")]
     TimeSecond = 19,
-    #[pyo3(name = "TIME_MILLISECOND")]
     TimeMillisecond = 20,
-    #[pyo3(name = "TIME_MICROSECOND")]
     TimeMicrosecond = 21,
-    #[pyo3(name = "TIME_NANOSECOND")]
     TimeNanosecond = 22,
-    #[pyo3(name = "DECIMAL128")]
     Decimal128 = 30,
-    #[pyo3(name = "JSON")]
     Json = 31,
-}
-
-#[pymethods]
-impl ColumnDataType {
-    fn __repr__(&self) -> String {
-        let name = match self {
-            Self::Boolean => "BOOLEAN",
-            Self::Int8 => "INT8",
-            Self::Int16 => "INT16",
-            Self::Int32 => "INT32",
-            Self::Int64 => "INT64",
-            Self::Uint8 => "UINT8",
-            Self::Uint16 => "UINT16",
-            Self::Uint32 => "UINT32",
-            Self::Uint64 => "UINT64",
-            Self::Float32 => "FLOAT32",
-            Self::Float64 => "FLOAT64",
-            Self::Binary => "BINARY",
-            Self::String => "STRING",
-            Self::Date => "DATE",
-            Self::TimestampSecond => "TIMESTAMP_SECOND",
-            Self::TimestampMillisecond => "TIMESTAMP_MILLISECOND",
-            Self::TimestampMicrosecond => "TIMESTAMP_MICROSECOND",
-            Self::TimestampNanosecond => "TIMESTAMP_NANOSECOND",
-            Self::TimeSecond => "TIME_SECOND",
-            Self::TimeMillisecond => "TIME_MILLISECOND",
-            Self::TimeMicrosecond => "TIME_MICROSECOND",
-            Self::TimeNanosecond => "TIME_NANOSECOND",
-            Self::Decimal128 => "DECIMAL128",
-            Self::Json => "JSON",
-        };
-        format!("ColumnDataType.{name}")
-    }
 }
 
 impl ColumnDataType {
@@ -142,38 +70,8 @@ impl ColumnDataType {
             Self::Json => ProtoType::Json,
         }
     }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Boolean => "boolean",
-            Self::Int8 => "int8",
-            Self::Int16 => "int16",
-            Self::Int32 => "int32",
-            Self::Int64 => "int64",
-            Self::Uint8 => "uint8",
-            Self::Uint16 => "uint16",
-            Self::Uint32 => "uint32",
-            Self::Uint64 => "uint64",
-            Self::Float32 => "float32",
-            Self::Float64 => "float64",
-            Self::Binary => "binary",
-            Self::String => "string",
-            Self::Date => "date",
-            Self::TimestampSecond => "timestamp_second",
-            Self::TimestampMillisecond => "timestamp_millisecond",
-            Self::TimestampMicrosecond => "timestamp_microsecond",
-            Self::TimestampNanosecond => "timestamp_nanosecond",
-            Self::TimeSecond => "time_second",
-            Self::TimeMillisecond => "time_millisecond",
-            Self::TimeMicrosecond => "time_microsecond",
-            Self::TimeNanosecond => "time_nanosecond",
-            Self::Decimal128 => "decimal128",
-            Self::Json => "json",
-        }
-    }
 }
 
-#[pyclass(name = "Column")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Column {
     pub(crate) name: String,
@@ -183,100 +81,76 @@ pub struct Column {
     pub(crate) scale: Option<i8>,
 }
 
-#[pymethods]
-impl Column {
-    #[new]
-    #[pyo3(signature = (name, data_type, semantic_type, precision=None, scale=None))]
-    fn new(
-        name: String,
-        data_type: ColumnDataType,
-        semantic_type: SemanticType,
-        precision: Option<u8>,
-        scale: Option<i8>,
-    ) -> PyResult<Self> {
-        if name.is_empty() {
-            return Err(raise("column name must not be empty", false));
+impl<'py> FromPyObject<'py> for Column {
+    fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+        let schema = value.py().import("greptimedb_ingester._types")?;
+        if !value.is_instance(&schema.getattr("Column")?)? {
+            return Err(raise("columns must contain Column objects", false));
         }
-        match (data_type, precision, scale) {
-            (ColumnDataType::Decimal128, Some(precision), Some(scale)) => {
-                if precision == 0 || precision > 38 {
-                    return Err(raise(
-                        "decimal128 precision must be between 1 and 38",
-                        false,
-                    ));
-                }
-                if scale < 0 || i32::from(scale) > i32::from(precision) {
-                    return Err(raise(
-                        "decimal128 scale must be between 0 and precision",
-                        false,
-                    ));
-                }
-            }
-            (ColumnDataType::Decimal128, _, _) => {
-                return Err(raise(
-                    "decimal128 columns require precision and scale",
-                    false,
-                ));
-            }
-            (_, Some(_), _) | (_, _, Some(_)) => {
-                return Err(raise(
-                    "precision and scale are only valid for decimal128 columns",
-                    false,
-                ));
-            }
-            _ => {}
-        }
+        let data_type = match value
+            .getattr("data_type")?
+            .getattr("value")?
+            .extract::<u8>()?
+        {
+            0 => ColumnDataType::Boolean,
+            1 => ColumnDataType::Int8,
+            2 => ColumnDataType::Int16,
+            3 => ColumnDataType::Int32,
+            4 => ColumnDataType::Int64,
+            5 => ColumnDataType::Uint8,
+            6 => ColumnDataType::Uint16,
+            7 => ColumnDataType::Uint32,
+            8 => ColumnDataType::Uint64,
+            9 => ColumnDataType::Float32,
+            10 => ColumnDataType::Float64,
+            11 => ColumnDataType::Binary,
+            12 => ColumnDataType::String,
+            13 => ColumnDataType::Date,
+            15 => ColumnDataType::TimestampSecond,
+            16 => ColumnDataType::TimestampMillisecond,
+            17 => ColumnDataType::TimestampMicrosecond,
+            18 => ColumnDataType::TimestampNanosecond,
+            19 => ColumnDataType::TimeSecond,
+            20 => ColumnDataType::TimeMillisecond,
+            21 => ColumnDataType::TimeMicrosecond,
+            22 => ColumnDataType::TimeNanosecond,
+            30 => ColumnDataType::Decimal128,
+            31 => ColumnDataType::Json,
+            _ => return Err(raise("Invalid column data type", false)),
+        };
+        let semantic_type = match value
+            .getattr("semantic_type")?
+            .getattr("value")?
+            .extract::<u8>()?
+        {
+            0 => SemanticType::Tag,
+            1 => SemanticType::Field,
+            2 => SemanticType::Timestamp,
+            _ => return Err(raise("Invalid column semantic type", false)),
+        };
         Ok(Self {
-            name,
+            name: value.getattr("name")?.extract()?,
             data_type,
             semantic_type,
-            precision,
-            scale,
+            precision: value.getattr("precision")?.extract()?,
+            scale: value.getattr("scale")?.extract()?,
         })
     }
+}
 
-    #[getter]
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[getter]
-    fn data_type(&self) -> ColumnDataType {
-        self.data_type
-    }
-
-    #[getter]
-    fn semantic_type(&self) -> SemanticType {
-        self.semantic_type
-    }
-
-    #[getter]
-    fn precision(&self) -> Option<u8> {
-        self.precision
-    }
-
-    #[getter]
-    fn scale(&self) -> Option<i8> {
-        self.scale
-    }
-
-    fn __repr__(&self) -> String {
-        match (self.precision, self.scale) {
-            (Some(precision), Some(scale)) => format!(
-                "Column({:?}, {}, {}, precision={}, scale={})",
-                self.name,
-                self.data_type.__repr__(),
-                self.semantic_type.__repr__(),
-                precision,
-                scale
-            ),
-            _ => format!(
-                "Column({:?}, {}, {})",
-                self.name,
-                self.data_type.__repr__(),
-                self.semantic_type.__repr__()
-            ),
-        }
+impl Column {
+    pub fn to_python(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let schema = py.import("greptimedb_ingester._types")?;
+        let dtype = schema
+            .getattr("ColumnDataType")?
+            .call1((self.data_type as u8,))?;
+        let semantic = schema
+            .getattr("SemanticType")?
+            .call1((self.semantic_type as u8,))?;
+        Ok(schema
+            .getattr("Column")?
+            .call1((&self.name, dtype, semantic, self.precision, self.scale))?
+            .unbind())
     }
 }
 

@@ -35,7 +35,7 @@ print(affected)
 
 `insert` 自动创建不存在的表并分批 COPY，默认每批 10,000 行。
 各批独立提交。服务端须支持 `COPY FROM STDIN`。
-支持类型和时间戳规则见 [API](docs/api.md#postgresql-copy-后端)。
+完整用法见 [COPY 示例](examples/postgres_example.py)。
 
 ## gRPC
 
@@ -47,8 +47,7 @@ client = Client(["127.0.0.1:4001"], database="public")
 ```
 
 支持 `insert`、`delete` 和 `bulk_writer`，详见 [使用指南](docs/usage.md) 和 [示例](examples)。
-两种后端都安装时，顶层 `Client` 默认 gRPC；
-使用上面的显式导入选择后端。
+从对应后端导入 `Client`，公共 schema 类型从 `greptimedb_ingester` 导入。
 
 ## 开发
 
@@ -58,4 +57,4 @@ uv run --extra postgres pytest
 ```
 
 开发两种后端时，将 `--extra postgres` 换成 `--all-extras`，需要 Rust 1.85+。
-集成测试与发布流程见 [测试文档](docs/testing.md)。
+集成测试与发布流程见 [CI 配置](.github/workflows/wheels.yml)。
