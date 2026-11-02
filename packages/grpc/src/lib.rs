@@ -22,10 +22,6 @@ pub fn runtime() -> &'static tokio::runtime::Runtime {
 
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("GreptimeError", m.py().get_type::<error::GreptimeError>())?;
-    m.add_class::<types::SemanticType>()?;
-    m.add_class::<types::ColumnDataType>()?;
-    m.add_class::<types::Column>()?;
     m.add_class::<types::WriteOptions>()?;
     m.add_class::<types::BulkResponse>()?;
     m.add_class::<client::Client>()?;

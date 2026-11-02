@@ -7,7 +7,7 @@ another row into py_ingester_bulk_existing.
 
 from datetime import timedelta
 
-from greptimedb_ingester import Client, WriteOptions
+from greptimedb_ingester.grpc import Client, WriteOptions
 
 from ddl import drop_table
 from type_samples import BULK_COLUMNS, BULK_ROW, INSERT_ROW, WHEN

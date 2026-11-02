@@ -12,7 +12,7 @@ use crate::bulk::BulkWriter;
 use crate::convert::{align, build_delete, build_insert, parse_row};
 use crate::error::{raise, RemoteError};
 use crate::runtime;
-use crate::types::{parse_grpc_compression, Column, WriteOptions};
+use crate::types::{checked_duration, parse_grpc_compression, Column, SemanticType, WriteOptions};
 
 #[pyclass]
 #[derive(Clone)]
@@ -117,7 +117,7 @@ impl Client {
         if table.is_empty() {
             return Err(raise("table name must not be empty", false));
         }
-        let aligned = align_rows(&columns, rows)?;
+        let aligned = align_rows(&columns, rows, "insert")?;
         let hints = hints.unwrap_or_default();
         self.execute(py, move |database| async move {
             let request = build_insert(&table, &columns, &aligned)?;
@@ -147,7 +147,16 @@ impl Client {
         if table.is_empty() {
             return Err(raise("table name must not be empty", false));
         }
-        let aligned = align_rows(&columns, rows)?;
+        if columns
+            .iter()
+            .any(|column| column.semantic_type == SemanticType::Field)
+        {
+            return Err(raise(
+                "delete columns must be TAG or TIMESTAMP, not FIELD",
+                false,
+            ));
+        }
+        let aligned = align_rows(&columns, rows, "delete")?;
         self.execute(py, move |database| async move {
             let request = build_delete(&table, &columns, &aligned)?;
             database.delete(request).await.map_err(RemoteError::from)
@@ -212,9 +221,13 @@ impl Client {
 fn align_rows(
     columns: &[Column],
     rows: &Bound<'_, PyAny>,
+    operation: &str,
 ) -> PyResult<Vec<Vec<crate::cell::Cell>>> {
     if columns.is_empty() {
-        return Err(raise("insert requires at least one column", false));
+        return Err(raise(
+            format!("{operation} requires at least one column"),
+            false,
+        ));
     }
     let mut aligned = Vec::new();
     for row in rows.try_iter()? {
@@ -222,17 +235,16 @@ fn align_rows(
         aligned.push(align(columns, &input)?);
     }
     if aligned.is_empty() {
-        return Err(raise("cannot insert an empty row batch", false));
+        return Err(raise(
+            format!("cannot {operation} an empty row batch"),
+            false,
+        ));
     }
     Ok(aligned)
 }
 
 fn optional_duration(value: Option<f64>, name: &str) -> PyResult<Option<Duration>> {
-    match value {
-        None => Ok(None),
-        Some(secs) if secs >= 0.0 => Ok(Some(Duration::from_secs_f64(secs))),
-        Some(_) => Err(raise(format!("{name} must be >= 0"), false)),
-    }
+    value.map(|secs| checked_duration(secs, name)).transpose()
 }
 
 fn build_ingester_client(

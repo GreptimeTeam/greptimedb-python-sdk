@@ -39,14 +39,24 @@ def test_column_is_immutable_and_decimal_metadata_is_preserved():
         column.name = "changed"
 
 
-def test_compatible_column_protocol_needs_no_native_import():
+def test_postgres_requires_public_column_objects():
     pytest.importorskip("psycopg2")
-    from greptimedb_ingester.postgres import _normalize_columns
+    from greptimedb_ingester.postgres import _columns
 
     column = SimpleNamespace(
         name="ts", data_type=D.TIMESTAMP_NANOSECOND, semantic_type=S.TIMESTAMP
     )
-    assert _normalize_columns([column])[0].name == "ts"
-    column.semantic_type = "invalid"
-    with pytest.raises(ValueError, match="semantic"):
-        _normalize_columns([column])
+    with pytest.raises(ValueError, match="Column objects"):
+        _columns([column])
+    public = Column("ts", D.TIMESTAMP_NANOSECOND, S.TIMESTAMP)
+    assert _columns([public]) == (public,)
+
+
+def test_schema_enums_have_names_and_are_not_integer_values():
+    assert str(D.STRING) == "ColumnDataType.STRING"
+    assert f"{D.STRING}" == "ColumnDataType.STRING"
+    assert str(S.TAG) == "SemanticType.TAG"
+    assert f"{S.TAG}" == "SemanticType.TAG"
+    assert len({D.BOOLEAN, S.TAG, 0, False}) == 3
+    assert not isinstance(D.STRING, int)
+    assert D.STRING.value == 12

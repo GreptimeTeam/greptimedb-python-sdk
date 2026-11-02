@@ -5,11 +5,7 @@ try:
         BulkResponse,
         BulkWriter,
         Client,
-        Column,
-        ColumnDataType,
-        GreptimeError,
         Rows,
-        SemanticType,
         WriteOptions,
     )
 except ModuleNotFoundError as exc:
@@ -17,10 +13,6 @@ except ModuleNotFoundError as exc:
 
 __all__ = [
     "Client",
-    "Column",
-    "ColumnDataType",
-    "SemanticType",
-    "GreptimeError",
     "WriteOptions",
     "Rows",
     "BulkWriter",

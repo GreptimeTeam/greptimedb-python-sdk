@@ -5,9 +5,7 @@ import io
 import math
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from enum import Enum
 from functools import lru_cache
 from itertools import islice
 
@@ -20,40 +18,34 @@ except ModuleNotFoundError as exc:
 
 
 from ._errors import GreptimeError
+from ._types import Column, ColumnDataType as _DataType, SemanticType as _SemanticType
 
 
 def _error(message, retriable=False, *, acknowledged_rows=None):
-    error = GreptimeError(message)
-    error.retriable = retriable
+    error = GreptimeError(message, retriable=retriable)
     if acknowledged_rows is not None:
         error.acknowledged_rows = acknowledged_rows
     return error
 
 
-class _SemanticType(Enum):
-    TAG = "TAG"
-    FIELD = "FIELD"
-    TIMESTAMP = "TIMESTAMP"
-
-
-class _DataType(Enum):
-    BOOLEAN = "BOOLEAN"
-    INT8 = "TINYINT"
-    INT16 = "SMALLINT"
-    INT32 = "INT"
-    INT64 = "BIGINT"
-    UINT8 = "TINYINT UNSIGNED"
-    UINT16 = "SMALLINT UNSIGNED"
-    UINT32 = "INT UNSIGNED"
-    UINT64 = "BIGINT UNSIGNED"
-    FLOAT32 = "FLOAT"
-    FLOAT64 = "DOUBLE"
-    STRING = "STRING"
-    TIMESTAMP_SECOND = "TIMESTAMP(0)"
-    TIMESTAMP_MILLISECOND = "TIMESTAMP(3)"
-    TIMESTAMP_MICROSECOND = "TIMESTAMP(6)"
-    TIMESTAMP_NANOSECOND = "TIMESTAMP(9)"
-
+_SQL_TYPES = {
+    _DataType.BOOLEAN: "BOOLEAN",
+    _DataType.INT8: "TINYINT",
+    _DataType.INT16: "SMALLINT",
+    _DataType.INT32: "INT",
+    _DataType.INT64: "BIGINT",
+    _DataType.UINT8: "TINYINT UNSIGNED",
+    _DataType.UINT16: "SMALLINT UNSIGNED",
+    _DataType.UINT32: "INT UNSIGNED",
+    _DataType.UINT64: "BIGINT UNSIGNED",
+    _DataType.FLOAT32: "FLOAT",
+    _DataType.FLOAT64: "DOUBLE",
+    _DataType.STRING: "STRING",
+    _DataType.TIMESTAMP_SECOND: "TIMESTAMP(0)",
+    _DataType.TIMESTAMP_MILLISECOND: "TIMESTAMP(3)",
+    _DataType.TIMESTAMP_MICROSECOND: "TIMESTAMP(6)",
+    _DataType.TIMESTAMP_NANOSECOND: "TIMESTAMP(9)",
+}
 
 _UNITS = {
     _DataType.TIMESTAMP_SECOND: 0,
@@ -64,60 +56,30 @@ _UNITS = {
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
-@dataclass(frozen=True)
-class _Column:
-    name: str
-    data_type: _DataType
-    semantic_type: _SemanticType
-
-    def __post_init__(self):
-        if not isinstance(self.name, str) or not self.name or "\x00" in self.name:
-            raise ValueError("Column name must be a nonempty string without NUL")
-        if not isinstance(self.data_type, _DataType):
-            raise TypeError("Invalid column data type")
-        if not isinstance(self.semantic_type, _SemanticType):
-            raise TypeError("Invalid column semantic type")
-        if (
-            self.semantic_type == _SemanticType.TIMESTAMP
-            and self.data_type not in _UNITS
-        ):
-            raise ValueError("Time index must have a timestamp data type")
-        if (
-            self.semantic_type == _SemanticType.TAG
-            and self.data_type != _DataType.STRING
-        ):
-            raise ValueError("This client supports STRING tags")
-
-
-def _normalize_columns(columns):
-    result = []
-    for column in columns:
-        try:
-            name = repr(column.data_type).split(".")[-1]
-            column_name = column.name
-            semantic_name = repr(column.semantic_type).split(".")[-1]
-        except AttributeError as exc:
-            raise TypeError("columns must contain Column objects") from exc
-        try:
-            dtype = _DataType[name]
-        except KeyError:
-            raise ValueError(f"PostgreSQL COPY does not support {name}") from None
-        try:
-            semantic = _SemanticType[semantic_name]
-        except KeyError:
-            raise ValueError(f"Invalid column semantic type: {semantic_name}") from None
-        result.append(_Column(column_name, dtype, semantic))
-    return _columns(result)
-
-
 def _columns(columns):
     columns = tuple(columns)
-    if not columns or any(not isinstance(c, _Column) for c in columns):
+    if not columns or any(not isinstance(c, Column) for c in columns):
         raise ValueError("columns must contain Column objects")
     if len({c.name for c in columns}) != len(columns):
         raise ValueError("Duplicate column names")
     if sum(c.semantic_type == _SemanticType.TIMESTAMP for c in columns) != 1:
         raise ValueError("Exactly one time index is required")
+    for column in columns:
+        Column.__post_init__(column)
+        if column.data_type not in _SQL_TYPES:
+            raise ValueError(
+                f"PostgreSQL COPY does not support {column.data_type.name}"
+            )
+        if (
+            column.semantic_type == _SemanticType.TIMESTAMP
+            and column.data_type not in _UNITS
+        ):
+            raise ValueError("Time index must have a timestamp data type")
+        if (
+            column.semantic_type == _SemanticType.TAG
+            and column.data_type != _DataType.STRING
+        ):
+            raise ValueError("This client supports STRING tags")
     return columns
 
 
@@ -126,7 +88,7 @@ def _validate_schema(columns, description):
     for column in columns:
         found = actual.get(column.name)
         expected_type = column.data_type.name.replace("_", "")
-        expected_semantic = column.semantic_type.value
+        expected_semantic = column.semantic_type.name
         if found is None:
             raise _error(f"Table schema mismatch: missing column {column.name!r}")
         if found[0].upper() != expected_type or found[1] != expected_semantic:
@@ -173,6 +135,8 @@ def _timestamp_encoder(precision):
             raise TypeError(
                 "Timestamp must be an integer in the column's unit or an aware datetime"
             )
+        if not -(2**63) <= units < 2**63:
+            raise ValueError("Timestamp value is outside INT64 range")
         seconds, fraction = divmod(units, unit)
         text = _second_text(seconds)
         return (
@@ -366,6 +330,12 @@ class Client:
             self._conn.autocommit = True
         return self._conn
 
+    def _discard_connection(self):
+        connection, self._conn = self._conn, None
+        self._schemas.clear()
+        if connection is not None:
+            connection.close()
+
     def health_check(self):
         with self._lock:
             try:
@@ -373,6 +343,8 @@ class Client:
                     cur.execute("SELECT 1")
                     cur.fetchone()
             except psycopg2.Error as exc:
+                if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                    self._discard_connection()
                 raise _error(
                     str(exc),
                     isinstance(
@@ -386,26 +358,30 @@ class Client:
         Batches are independently acknowledged. Failure may leave partial writes;
         neither validation nor transport failures are retried automatically.
         """
-        try:
-            return self._insert(table, _normalize_columns(columns), rows)
-        except (ValueError, TypeError, OverflowError) as exc:
-            raise _error(
-                f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
-            ) from exc
+        with self._lock:
+            if self._closed:
+                raise _error("Client is closed", acknowledged_rows=0)
+            try:
+                columns = _columns(columns)
+            except Exception as exc:
+                raise _error(
+                    f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
+                ) from exc
+            return self._insert(table, columns, rows)
 
     def _insert(self, table, columns, rows):
-        encode_row = _row_encoder(columns)
-        identifier = _table(table)
-        command = sql.SQL("COPY {} ({}) FROM STDIN WITH (FORMAT csv)").format(
-            identifier, sql.SQL(", ").join(sql.Identifier(c.name) for c in columns)
-        )
-        copy_command = None
         try:
+            encode_row = _row_encoder(columns)
+            identifier = _table(table)
+            command = sql.SQL("COPY {} ({}) FROM STDIN WITH (FORMAT csv)").format(
+                identifier, sql.SQL(", ").join(sql.Identifier(c.name) for c in columns)
+            )
             iterator = iter(rows)
         except Exception as exc:
             raise _error(
                 f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
             ) from exc
+        copy_command = None
         affected = 0
         with self._lock:
             if self._closed:
@@ -443,7 +419,8 @@ class Client:
                             self._schemas.pop(table, None)
                             definitions = [
                                 sql.SQL("{} {}").format(
-                                    sql.Identifier(c.name), sql.SQL(c.data_type.value)
+                                    sql.Identifier(c.name),
+                                    sql.SQL(_SQL_TYPES[c.data_type]),
                                 )
                                 for c in columns
                             ]
@@ -486,7 +463,18 @@ class Client:
                                 f"Expected {len(batch)} acknowledged rows, received {cur.rowcount}",
                                 acknowledged_rows=affected,
                             )
+                except GreptimeError as exc:
+                    if not hasattr(exc, "acknowledged_rows"):
+                        raise _error(
+                            f"COPY failed after {affected} acknowledged rows: {exc}",
+                            exc.retriable,
+                            acknowledged_rows=affected,
+                        ) from exc
+                    raise
                 except psycopg2.Error as exc:
+                    self._schemas.pop(table, None)
+                    if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                        self._discard_connection()
                     raise _error(
                         f"COPY failed after {affected} acknowledged rows; current batch may be partial: {exc}",
                         isinstance(

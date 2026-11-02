@@ -1,19 +1,17 @@
-"""Python schema values matching the gRPC SDK's public names and enum values."""
+"""Public column schema shared by both backends."""
 
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum
 
 
 from ._errors import GreptimeError
 
 
 def _schema_error(message):
-    error = GreptimeError(message)
-    error.retriable = False
-    return error
+    return GreptimeError(message)
 
 
-class _NamedEnum(IntEnum):
+class _NamedEnum(Enum):
     def __repr__(self):
         return f"{type(self).__name__}.{self.name}"
 

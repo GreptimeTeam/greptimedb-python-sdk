@@ -274,7 +274,7 @@ def test_all_declared_types_have_an_explicit_supported_or_rejected_case():
             "FLOAT64": 1.25,
         }.get(name, 1)
         cols = [COLUMNS[1], Column("field", getattr(D, name), S.FIELD)]
-        normalized = pg._normalize_columns(cols)
+        normalized = pg._columns(cols)
         assert pg._row_encoder(normalized)([0, value])[-1] is not None
         assert pg._row_encoder(normalized)([0, None])[-1] is None
 
@@ -291,7 +291,7 @@ def test_every_integer_width_checks_bounds(name, bits, unsigned):
     low, high = (
         (0, 2**bits - 1) if unsigned else (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1)
     )
-    cols = pg._normalize_columns(
+    cols = pg._columns(
         COLUMNS[:2] + [Column("value", getattr(D, name), S.FIELD)]
     )
     encode = pg._row_encoder(cols)
@@ -305,7 +305,7 @@ def test_every_integer_width_checks_bounds(name, bits, unsigned):
 @pytest.mark.parametrize("dtype", [D.FLOAT32, D.FLOAT64])
 def test_float_validation(dtype):
     encode = pg._row_encoder(
-        pg._normalize_columns([COLUMNS[1], Column("f", dtype, S.FIELD)])
+        pg._columns([COLUMNS[1], Column("f", dtype, S.FIELD)])
     )
     for value in [float("inf"), float("nan"), True, "1"]:
         with pytest.raises((TypeError, ValueError)):
@@ -417,10 +417,6 @@ def test_context_exit_closes_and_preserves_user_exception(database):
 
 
 def test_postgres_only_import_has_no_native_dependency():
-    import importlib.util
-
-    if importlib.util.find_spec("greptimedb_ingester_grpc") is not None:
-        pytest.skip("No-native assertion is exercised by postgres-only CI")
     code = """
 import sys
 import greptimedb_ingester
@@ -681,7 +677,7 @@ def test_health_check_reconnects_after_an_established_connection_breaks(database
 )
 def test_integer_enum_encodes_as_builtin_int(dtype, enum_type):
     state = enum_type("State", {"OK": 1})
-    columns = pg._normalize_columns([COLUMNS[1], Column("value", dtype, S.FIELD)])
+    columns = pg._columns([COLUMNS[1], Column("value", dtype, S.FIELD)])
     encoded = pg._row_encoder(columns)([0, state.OK])
     assert type(encoded[1]) is int
     assert encoded[1] == 1
@@ -869,3 +865,142 @@ def test_ack_count_mismatch_reports_prefix_and_uncertain_batch(
         assert consumed == list(range(failed_batch * 2))
         cur.copy_expert.side_effect = successful_copy
         assert client.insert("ack_mismatch", COLUMNS, [["a", 10, 10]]) == 1
+
+
+@pytest.mark.parametrize("invalid_schema", [False, True])
+def test_closed_client_does_not_touch_inputs(database, invalid_schema):
+    class Untouched:
+        def __iter__(self):
+            pytest.fail("closed client must not iterate input")
+
+    client = pg.Client("localhost:4003")
+    client.close()
+    with pytest.raises(GreptimeError, match="Client is closed") as exc:
+        client.insert("t", Untouched() if invalid_schema else COLUMNS, Untouched())
+    assert exc.value.acknowledged_rows == 0
+    assert exc.value.retriable is False
+    database[2].assert_not_called()
+
+
+def test_schema_iterator_failure_is_a_public_error(database):
+    def columns():
+        yield COLUMNS[0]
+        raise LookupError("schema source failed")
+
+    with pytest.raises(GreptimeError, match="schema source failed") as exc:
+        pg.Client("localhost:4003").insert("t", columns(), [])
+    assert exc.value.acknowledged_rows == 0
+    assert exc.value.retriable is False
+    assert isinstance(exc.value.__cause__, LookupError)
+    database[2].assert_not_called()
+
+
+@pytest.mark.parametrize("value", [2**63, -(2**63) - 1, datetime(2500, 1, 1, tzinfo=timezone.utc)])
+def test_timestamp_overflow_is_rejected_before_copy(database, value):
+    with pytest.raises(GreptimeError, match="range") as exc:
+        pg.Client("localhost:4003").insert("t", COLUMNS, [["a", value, 1]])
+    assert exc.value.acknowledged_rows == 0
+    database[2].assert_not_called()
+
+
+def test_copy_sql_failure_invalidates_cached_schema_without_retry(database):
+    _, cur, connect, payloads = database
+    with pg.Client("localhost:4003") as client:
+        assert client.insert("recreated", COLUMNS, [["a", 0, 1]]) == 1
+        success = cur.copy_expert.side_effect
+        cur.copy_expert.side_effect = pg.psycopg2.ProgrammingError("table missing")
+        with pytest.raises(GreptimeError) as exc:
+            client.insert("recreated", COLUMNS, [["a", 1, 2]])
+        assert exc.value.acknowledged_rows == 0
+        assert "recreated" not in client._schemas
+        assert cur.copy_expert.call_count == 2
+        cur.copy_expert.side_effect = success
+        assert client.insert("recreated", COLUMNS, [["a", 2, 3]]) == 1
+    assert cur.fetchall.call_count == 2
+    assert connect.call_count == 1
+    assert len(payloads) == 2
+
+
+@pytest.mark.parametrize("operation", ["insert", "health_check"])
+@pytest.mark.parametrize("error_type", [pg.psycopg2.OperationalError, pg.psycopg2.InterfaceError])
+def test_transport_failure_discards_even_a_nominally_open_connection(database, operation, error_type):
+    conn, cur, connect, _ = database
+    healthy = MagicMock(closed=0)
+    healthy_cur = healthy.cursor.return_value.__enter__.return_value
+    healthy_cur.rowcount = 1
+    healthy_cur.fetchall.return_value = TABLE_SCHEMA
+    connect.side_effect = [conn, healthy]
+    with pg.Client("localhost:4003") as client:
+        assert client.insert("t", COLUMNS, [["a", 0, 1]]) == 1
+        if operation == "insert":
+            cur.copy_expert.side_effect = error_type("connection unusable")
+            call = lambda: client.insert("t", COLUMNS, [["a", 1, 2]])
+        else:
+            cur.execute.side_effect = error_type("connection unusable")
+            call = client.health_check
+        with pytest.raises(GreptimeError) as exc:
+            call()
+        assert exc.value.retriable is True
+        assert client._conn is None
+        assert client._schemas == {}
+        assert conn.closed == 0  # driver has not marked the socket closed
+        assert connect.call_count == 1  # never retry the failed operation
+        assert client.insert("t", COLUMNS, [["a", 2, 3]]) == 1
+        assert connect.call_count == 2
+    conn.close.assert_called_once()
+    healthy_cur.fetchall.assert_called_once()
+
+
+@pytest.mark.parametrize("value", [D.INT8, S.TAG])
+def test_schema_enums_cannot_be_written_as_numbers(database, value):
+    with pytest.raises(GreptimeError):
+        pg.Client("localhost:4003").insert("t", COLUMNS, [["a", 0, value]])
+    database[2].assert_not_called()
+
+
+
+def test_schema_validation_failure_reports_acknowledged_rows(database):
+    _, cur, _, _ = database
+    cur.fetchall.return_value = TABLE_SCHEMA[1:]
+    with pytest.raises(GreptimeError, match="after 0 acknowledged rows") as exc:
+        pg.Client("localhost:4003").insert("t", COLUMNS, [["a", 0, 1]])
+    assert exc.value.acknowledged_rows == 0
+    assert exc.value.retriable is False
+    cur.copy_expert.assert_not_called()
+
+
+@pytest.mark.parametrize("name,value", [
+    ("name", ""), ("name", "bad\x00name"), ("data_type", S.FIELD),
+    ("semantic_type", D.BOOLEAN), ("precision", 1),
+])
+def test_forged_public_column_is_revalidated_before_copy(database, name, value):
+    tag = Column("host", D.STRING, S.TAG)
+    object.__setattr__(tag, name, value)
+    with pytest.raises(GreptimeError) as exc:
+        pg.Client("localhost:4003").insert("t", [tag, *COLUMNS[1:]], [["a", 0, 1]])
+    assert exc.value.acknowledged_rows == 0
+    assert exc.value.retriable is False
+    database[2].assert_not_called()
+
+
+def test_schema_failure_after_reconnect_preserves_acknowledged_prefix(database):
+    conn, cur, connect, _ = database
+    healthy = MagicMock(closed=0)
+    healthy_cur = healthy.cursor.return_value.__enter__.return_value
+    healthy_cur.fetchall.return_value = TABLE_SCHEMA[1:]
+    connect.side_effect = [conn, healthy]
+    successful_copy = cur.copy_expert.side_effect
+
+    def copy_then_disconnect(command, data):
+        successful_copy(command, data)
+        conn.closed = 1
+
+    cur.copy_expert.side_effect = copy_then_disconnect
+    with pg.Client("localhost:4003", batch_size=1) as client:
+        with pytest.raises(GreptimeError, match="after 1 acknowledged rows") as exc:
+            client.insert("t", COLUMNS, [["a", 0, 1], ["b", 1, 2]])
+        assert exc.value.acknowledged_rows == 1
+        assert exc.value.retriable is False
+        assert "schema mismatch" in str(exc.value)
+        assert "t" not in client._schemas
+    healthy_cur.copy_expert.assert_not_called()
