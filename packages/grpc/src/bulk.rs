@@ -421,11 +421,8 @@ fn table_schema(
             crate::types::SemanticType::Field
                 if column.data_type == crate::types::ColumnDataType::Decimal128 =>
             {
-                schema.add_decimal128_field(
-                    column.name.clone(),
-                    column.precision.expect("precision"),
-                    column.scale.expect("scale"),
-                )
+                let (precision, scale) = column.decimal_params()?;
+                schema.add_decimal128_field(column.name.clone(), precision, scale)
             }
             crate::types::SemanticType::Field => schema.add_field(column.name.clone(), dtype),
         };

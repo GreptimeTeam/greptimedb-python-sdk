@@ -105,8 +105,9 @@ pub fn column_schema(column: &Column) -> Result<ColumnSchema, RemoteError> {
         SemanticType::Field => field(&column.name, dtype),
     };
     if column.data_type == ColumnDataType::Decimal128 {
-        let precision = i32::from(column.precision.expect("decimal precision"));
-        let scale = i32::from(column.scale.expect("decimal scale"));
+        let (precision, scale) = column.decimal_params()?;
+        let precision = i32::from(precision);
+        let scale = i32::from(scale);
         schema.datatype_extension = Some(ColumnDataTypeExtension {
             type_ext: Some(TypeExt::DecimalType(DecimalTypeExtension {
                 precision,
@@ -293,9 +294,7 @@ pub fn to_proto(
         ColumnDataType::TimeNanosecond => {
             time_nanosecond_value(expect_int(cell, "time_nanosecond")?)
         }
-        ColumnDataType::Decimal128 => {
-            decimal128_value(expect_decimal(cell, column.scale.expect("scale"))?)
-        }
+        ColumnDataType::Decimal128 => decimal128_value(expect_decimal(cell, column)?),
         ColumnDataType::Json => {
             let text = expect_json_text(cell)?;
             serde_json::from_str::<serde_json::Value>(&text)
@@ -351,9 +350,7 @@ pub fn to_bulk(column: &Column, cell: &Cell) -> Result<Value, RemoteError> {
         ColumnDataType::TimeNanosecond => {
             Value::TimeNanosecond(expect_int(cell, "time_nanosecond")?)
         }
-        ColumnDataType::Decimal128 => {
-            Value::Decimal128(expect_decimal(cell, column.scale.expect("scale"))?)
-        }
+        ColumnDataType::Decimal128 => Value::Decimal128(expect_decimal(cell, column)?),
         ColumnDataType::Json => Value::Binary(expect_bytes(cell)?),
     };
     Ok(value)
@@ -521,49 +518,60 @@ fn expect_epoch(cell: &Cell, unit_nanos: i64) -> Result<i64, RemoteError> {
 }
 
 fn scale_timestamp(secs: i64, subsec_nanos: u32, unit_nanos: i64) -> Result<i64, RemoteError> {
-    let total = secs
-        .checked_mul(1_000_000_000)
-        .and_then(|value| value.checked_add(i64::from(subsec_nanos)))
-        .ok_or_else(|| RemoteError::new("timestamp value is out of range", false))?;
-    total
-        .checked_div(unit_nanos)
-        .ok_or_else(|| RemoteError::new("timestamp value is out of range", false))
+    let total = i128::from(secs) * 1_000_000_000 + i128::from(subsec_nanos);
+    fit_int(total.div_euclid(i128::from(unit_nanos)), "timestamp")
 }
 
-fn expect_decimal(cell: &Cell, scale: i8) -> Result<i128, RemoteError> {
-    match cell {
-        Cell::Int(value) => Ok(*value),
-        Cell::Decimal(parts) => scale_decimal(parts, scale),
-        other => Err(type_mismatch("decimal128", other)),
+fn expect_decimal(cell: &Cell, column: &Column) -> Result<i128, RemoteError> {
+    let (precision, scale) = column.decimal_params()?;
+    let value = match cell {
+        Cell::Int(value) => *value,
+        Cell::Decimal(parts) => scale_decimal(parts, scale)?,
+        other => return Err(type_mismatch("decimal128", other)),
+    };
+    let limit = 10i128.pow(u32::from(precision));
+    if value <= -limit || value >= limit {
+        return Err(RemoteError::new(
+            format!("decimal128 value exceeds precision {precision}"),
+            false,
+        ));
     }
+    Ok(value)
 }
 
 fn scale_decimal(parts: &DecimalParts, scale: i8) -> Result<i128, RemoteError> {
-    let coefficient: i128 = parts
-        .digits
+    let digits = parts.digits.trim_start_matches('0');
+    if digits.is_empty() {
+        return Ok(0);
+    }
+    let shift = i128::from(parts.exponent) + i128::from(scale);
+    let text = if shift < 0 {
+        let removed = usize::try_from(-shift).unwrap_or(usize::MAX);
+        if removed >= digits.len() || !digits[digits.len() - removed..].bytes().all(|b| b == b'0') {
+            return Err(RemoteError::new(
+                format!("decimal has more fractional digits than scale {scale}"),
+                false,
+            ));
+        }
+        digits[..digits.len() - removed].to_owned()
+    } else {
+        // Decimal128 has at most 38 significant decimal digits. Bound the work
+        // before allocating, even for Decimal exponents near Python's limit.
+        if shift > 38 || digits.len() > 38 - shift as usize {
+            return Err(RemoteError::new("decimal128 value is out of range", false));
+        }
+        let mut text = digits.to_owned();
+        text.extend(std::iter::repeat('0').take(shift as usize));
+        text
+    };
+    let coefficient: i128 = text
         .parse()
         .map_err(|_| RemoteError::new("decimal128 value is out of range", false))?;
-    let shift = parts.exponent + i32::from(scale);
-    let scaled = if shift >= 0 {
-        let factor = 10i128
-            .checked_pow(shift as u32)
-            .ok_or_else(|| RemoteError::new("decimal128 value is out of range", false))?;
+    Ok(if parts.negative {
+        -coefficient
+    } else {
         coefficient
-            .checked_mul(factor)
-            .ok_or_else(|| RemoteError::new("decimal128 value is out of range", false))?
-    } else {
-        return Err(RemoteError::new(
-            format!("decimal has more fractional digits than scale {scale}"),
-            false,
-        ));
-    };
-    if parts.negative {
-        scaled
-            .checked_neg()
-            .ok_or_else(|| RemoteError::new("decimal128 value is out of range", false))
-    } else {
-        Ok(scaled)
-    }
+    })
 }
 
 #[pyfunction]

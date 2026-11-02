@@ -35,7 +35,7 @@ print(affected)
 
 `insert` 自动创建不存在的表并分批 COPY，默认每批 10,000 行。
 各批独立提交。服务端须支持 `COPY FROM STDIN`。
-完整用法见 [COPY 示例](examples/postgres_example.py)。
+完整用法见 [PG 入门指南](docs/postgres-getting-started.md)和 [COPY 示例](examples/postgres_example.py)。
 
 ## gRPC
 

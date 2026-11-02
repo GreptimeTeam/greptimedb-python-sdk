@@ -31,10 +31,14 @@ pub fn raise(message: impl Into<String>, retriable: bool) -> PyErr {
         match py
             .import("greptimedb_ingester._errors")
             .and_then(|module| module.getattr("GreptimeError"))
-            .and_then(|class| class.call1((message, retriable)))
+            .and_then(|class| class.call1((&message, retriable)))
         {
             Ok(instance) => PyErr::from_value(instance),
-            Err(error) => error,
+            Err(_) => {
+                let error = pyo3::exceptions::PyRuntimeError::new_err(message);
+                let _ = error.value(py).setattr("retriable", retriable);
+                error
+            }
         }
     })
 }

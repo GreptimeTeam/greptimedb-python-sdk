@@ -487,3 +487,19 @@ def test_late_input_failure_reports_persisted_prefix(query, table, source_error)
             sql.SQL("SELECT seq FROM {} ORDER BY ts").format(sql.Identifier(table)),
         ) == [(0,), (1,)]
         assert client.insert(table, COLUMNS[:3], [["a", BASE_MS + 3, 3]]) == 1
+
+
+def test_external_drop_invalidates_cache_and_next_call_recreates(client, query, table):
+    columns = COLUMNS[:3]
+    assert client.insert(table, columns, [["a", BASE_MS, 1]]) == 1
+    with query.cursor() as cur:
+        cur.execute(sql.SQL("DROP TABLE {}").format(sql.Identifier(table)))
+    with pytest.raises(GreptimeError, match="COPY failed") as exc:
+        client.insert(table, columns, [["b", BASE_MS + 1, 2]])
+    assert exc.value.acknowledged_rows == 0
+    assert table not in client._schemas
+    # Recreate only on the caller's next operation; never replay the failed row.
+    assert client.insert(table, columns, [["c", BASE_MS + 2, 3]]) == 1
+    assert records(
+        query, sql.SQL("SELECT host, seq FROM {}").format(sql.Identifier(table))
+    ) == [("c", 3)]

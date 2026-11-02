@@ -9,7 +9,7 @@ use crate::error::{raise, RemoteError};
 pub struct DecimalParts {
     pub negative: bool,
     pub digits: String,
-    pub exponent: i32,
+    pub exponent: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -102,11 +102,14 @@ pub fn cell_from_py(obj: &Bound<'_, PyAny>) -> PyResult<Cell> {
         || obj.is_instance_of::<PyList>()
         || obj.is_instance_of::<PyTuple>()
     {
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("allow_nan", false)?;
         let text: String = py
             .import("json")?
             .getattr("dumps")?
-            .call1((obj,))?
-            .extract()?;
+            .call((obj,), Some(&kwargs))
+            .and_then(|value| value.extract())
+            .map_err(|error| raise(format!("invalid JSON: {error}"), false))?;
         return Ok(Cell::Json(text));
     }
 
@@ -131,7 +134,7 @@ fn decimal_cell(obj: &Bound<'_, PyAny>) -> PyResult<Cell> {
     if text.is_empty() {
         text.push('0');
     }
-    let exponent: i32 = parts
+    let exponent: i64 = parts
         .getattr("exponent")?
         .extract()
         .map_err(|_| raise("Decimal exponent is not an integer", false))?;
@@ -145,7 +148,7 @@ fn decimal_cell(obj: &Bound<'_, PyAny>) -> PyResult<Cell> {
 fn timestamp_cell(obj: &Bound<'_, PyAny>, datetime_mod: &Bound<'_, PyAny>) -> PyResult<Cell> {
     let py = obj.py();
     let utc = datetime_mod.getattr("timezone")?.getattr("utc")?;
-    let aware = if obj.getattr("tzinfo")?.is_none() {
+    let aware = if obj.getattr("tzinfo")?.is_none() || obj.call_method0("utcoffset")?.is_none() {
         let kwargs = PyDict::new(py);
         kwargs.set_item("tzinfo", utc.clone())?;
         obj.call_method("replace", (), Some(&kwargs))?

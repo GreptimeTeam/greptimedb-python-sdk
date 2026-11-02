@@ -35,7 +35,7 @@ print(affected)
 
 `insert` creates missing tables and writes COPY batches (default: 10,000 rows).
 Batches commit separately. The server must support `COPY FROM STDIN`.
-See the [COPY example](examples/postgres_example.py).
+See the [PG getting started guide](docs/postgres-getting-started.en.md) and [COPY example](examples/postgres_example.py).
 
 ## gRPC
 

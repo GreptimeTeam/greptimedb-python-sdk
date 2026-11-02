@@ -50,3 +50,13 @@ def test_postgres_requires_public_column_objects():
         _columns([column])
     public = Column("ts", D.TIMESTAMP_NANOSECOND, S.TIMESTAMP)
     assert _columns([public]) == (public,)
+
+
+def test_schema_enums_have_names_and_are_not_integer_values():
+    assert str(D.STRING) == "ColumnDataType.STRING"
+    assert f"{D.STRING}" == "ColumnDataType.STRING"
+    assert str(S.TAG) == "SemanticType.TAG"
+    assert f"{S.TAG}" == "SemanticType.TAG"
+    assert len({D.BOOLEAN, S.TAG, 0, False}) == 3
+    assert not isinstance(D.STRING, int)
+    assert D.STRING.value == 12

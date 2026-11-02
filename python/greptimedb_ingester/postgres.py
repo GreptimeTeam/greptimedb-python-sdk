@@ -65,6 +65,7 @@ def _columns(columns):
     if sum(c.semantic_type == _SemanticType.TIMESTAMP for c in columns) != 1:
         raise ValueError("Exactly one time index is required")
     for column in columns:
+        Column.__post_init__(column)
         if column.data_type not in _SQL_TYPES:
             raise ValueError(
                 f"PostgreSQL COPY does not support {column.data_type.name}"
@@ -134,6 +135,8 @@ def _timestamp_encoder(precision):
             raise TypeError(
                 "Timestamp must be an integer in the column's unit or an aware datetime"
             )
+        if not -(2**63) <= units < 2**63:
+            raise ValueError("Timestamp value is outside INT64 range")
         seconds, fraction = divmod(units, unit)
         text = _second_text(seconds)
         return (
@@ -327,6 +330,12 @@ class Client:
             self._conn.autocommit = True
         return self._conn
 
+    def _discard_connection(self):
+        connection, self._conn = self._conn, None
+        self._schemas.clear()
+        if connection is not None:
+            connection.close()
+
     def health_check(self):
         with self._lock:
             try:
@@ -334,6 +343,8 @@ class Client:
                     cur.execute("SELECT 1")
                     cur.fetchone()
             except psycopg2.Error as exc:
+                if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                    self._discard_connection()
                 raise _error(
                     str(exc),
                     isinstance(
@@ -347,26 +358,30 @@ class Client:
         Batches are independently acknowledged. Failure may leave partial writes;
         neither validation nor transport failures are retried automatically.
         """
-        try:
-            return self._insert(table, _columns(columns), rows)
-        except (ValueError, TypeError, OverflowError) as exc:
-            raise _error(
-                f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
-            ) from exc
+        with self._lock:
+            if self._closed:
+                raise _error("Client is closed", acknowledged_rows=0)
+            try:
+                columns = _columns(columns)
+            except Exception as exc:
+                raise _error(
+                    f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
+                ) from exc
+            return self._insert(table, columns, rows)
 
     def _insert(self, table, columns, rows):
-        encode_row = _row_encoder(columns)
-        identifier = _table(table)
-        command = sql.SQL("COPY {} ({}) FROM STDIN WITH (FORMAT csv)").format(
-            identifier, sql.SQL(", ").join(sql.Identifier(c.name) for c in columns)
-        )
-        copy_command = None
         try:
+            encode_row = _row_encoder(columns)
+            identifier = _table(table)
+            command = sql.SQL("COPY {} ({}) FROM STDIN WITH (FORMAT csv)").format(
+                identifier, sql.SQL(", ").join(sql.Identifier(c.name) for c in columns)
+            )
             iterator = iter(rows)
         except Exception as exc:
             raise _error(
                 f"Input failed after 0 acknowledged rows: {exc}", acknowledged_rows=0
             ) from exc
+        copy_command = None
         affected = 0
         with self._lock:
             if self._closed:
@@ -448,7 +463,18 @@ class Client:
                                 f"Expected {len(batch)} acknowledged rows, received {cur.rowcount}",
                                 acknowledged_rows=affected,
                             )
+                except GreptimeError as exc:
+                    if not hasattr(exc, "acknowledged_rows"):
+                        raise _error(
+                            f"COPY failed after {affected} acknowledged rows: {exc}",
+                            exc.retriable,
+                            acknowledged_rows=affected,
+                        ) from exc
+                    raise
                 except psycopg2.Error as exc:
+                    self._schemas.pop(table, None)
+                    if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                        self._discard_connection()
                     raise _error(
                         f"COPY failed after {affected} acknowledged rows; current batch may be partial: {exc}",
                         isinstance(
